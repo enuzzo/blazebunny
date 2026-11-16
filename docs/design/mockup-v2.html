@@ -1,0 +1,319 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Blazebunny mockup v2</title>
+<style>
+/* 8 pt grid. Generic core; Midjourney (and other generators) are readers that add sections. */
+:root {
+  --bg: #161618; --grid-bg: #1b1b1e; --panel: #1f1f22; --pop: #2a2a2e; --sidebar: rgba(40,40,44,.72);
+  --line: rgba(255,255,255,.07); --line-2: rgba(255,255,255,.12);
+  --text: #ececee; --text-2: #a1a1a8; --text-3: #6c6c74;
+  --accent: #ff7a1a; --accent-soft: rgba(255,122,26,.15); --chip: rgba(255,255,255,.07);
+  --mj: #8b8cf7; --mj-soft: rgba(139,140,247,.15);
+  --cell: 160px; --gap: 8px;
+  font: 13px/1.38 -apple-system, BlinkMacSystemFont, "SF Pro Text", system-ui, sans-serif; color: var(--text);
+}
+* { box-sizing: border-box; }
+body { margin: 0; background: #0b0b0c; min-height: 100vh; display: grid; place-items: center; padding: 24px; }
+.mono { font-family: "SF Mono", ui-monospace, Menlo, monospace; font-size: 11.5px; }
+.num { font-variant-numeric: tabular-nums; }
+.window { width: min(1440px, 100%); height: min(900px, calc(100vh - 48px)); background: var(--bg); border-radius: 14px; overflow: hidden;
+  display: grid; grid-template-columns: 232px minmax(0, 1fr) 352px; grid-template-rows: 52px 48px 1fr 28px;
+  box-shadow: 0 0 0 1px rgba(255,255,255,.08), 0 32px 80px rgba(0,0,0,.6); position: relative; }
+
+/* Sidebar */
+.sidebar { grid-row: 1 / 5; background: var(--sidebar); border-right: 1px solid var(--line); padding: 16px 8px; display: flex; flex-direction: column; gap: 16px; }
+.lights { display: flex; gap: 8px; padding: 2px 8px 8px; } .lights i { width: 12px; height: 12px; border-radius: 50%; background: #ff5f57; }
+.lights i:nth-child(2){background:#febc2e} .lights i:nth-child(3){background:#28c840}
+.sec h6 { margin: 0 0 4px; padding: 0 8px; font-size: 11px; font-weight: 600; color: var(--text-3); }
+.row { height: 28px; display: flex; align-items: center; gap: 8px; padding: 0 8px; border-radius: 6px; cursor: default; }
+.row .ic { width: 16px; text-align: center; color: var(--accent); font-size: 12px; } .row .ct { margin-left: auto; color: var(--text-3); font-size: 11px; }
+.row.sel { background: rgba(255,255,255,.1); } .row.sub { padding-left: 32px; }
+.dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; margin: 0 4px; }
+.grow { flex: 1; }
+
+/* Toolbar */
+.toolbar { grid-column: 2 / 4; display: flex; align-items: center; gap: 8px; padding: 0 16px; border-bottom: 1px solid var(--line); }
+.title { display: flex; flex-direction: column; line-height: 1.15; margin-right: 8px; min-width: 160px; }
+.title b { font-weight: 600; } .title span { font-size: 11px; color: var(--text-2); }
+.seg { display: flex; background: var(--chip); border-radius: 7px; padding: 2px; }
+.seg button { all: unset; height: 24px; padding: 0 10px; border-radius: 5px; font-size: 12px; color: var(--text-2); cursor: pointer; }
+.seg button.on { background: rgba(255,255,255,.14); color: var(--text); }
+.tbtn { all: unset; height: 28px; padding: 0 10px; border-radius: 7px; display: inline-flex; align-items: center; gap: 6px; color: var(--text-2); cursor: pointer; font-size: 12px; }
+.tbtn:hover { background: var(--chip); }
+.spacer { flex: 1; }
+input[type=range] { width: 96px; accent-color: var(--accent); }
+.search { width: 300px; height: 28px; border-radius: 7px; background: var(--chip); display: flex; align-items: center; gap: 6px; padding: 0 8px; color: var(--text-3); }
+.search input { all: unset; flex: 1; color: var(--text); font-size: 12px; }
+
+/* Filter row: pills */
+.filterrow { grid-column: 2 / 3; min-width: 0; overflow-x: auto; scrollbar-width: none; display: flex; align-items: center; gap: 8px; padding: 0 16px; border-bottom: 1px solid var(--line); background: var(--bg); }
+.pill { all: unset; height: 28px; padding: 0 10px; border-radius: 14px; display: inline-flex; align-items: center; gap: 6px; font-size: 12px; cursor: pointer;
+  color: var(--text-2); box-shadow: inset 0 0 0 1px var(--line-2); white-space: nowrap; }
+.pill:hover { background: var(--chip); }
+.pill .k { color: var(--text-2); } .pill .v { color: var(--text); font-weight: 500; }
+.pill.on { background: var(--accent-soft); box-shadow: none; } .pill.on .k { color: var(--accent); opacity: .8; } .pill.on .v { color: var(--accent); }
+.pill .x { width: 16px; height: 16px; border-radius: 8px; display: grid; place-items: center; font-size: 9px; margin-right: -4px; opacity: .7; }
+.pill .x:hover { background: rgba(255,255,255,.12); opacity: 1; }
+.pill.add { box-shadow: none; color: var(--text-3); }
+.group { flex: none; display: flex; align-items: center; gap: 6px; padding-left: 8px; margin-left: 4px; border-left: 1px solid var(--line-2); }
+.group .tag { white-space: nowrap; font-size: 11px; font-weight: 600; color: var(--mj); display: inline-flex; align-items: center; gap: 4px; padding-right: 2px; }
+.group .pill.on { background: var(--mj-soft); } .group .pill.on .k, .group .pill.on .v { color: var(--mj); }
+.save { all: unset; white-space: nowrap; flex: none; height: 28px; padding: 0 12px; border-radius: 7px; background: var(--accent); color: #1a0c00; font-weight: 600; font-size: 12px; cursor: pointer; }
+.clear { all: unset; white-space: nowrap; color: var(--text-2); font-size: 12px; cursor: pointer; padding: 0 4px; }
+
+/* Popover */
+.pop { position: absolute; z-index: 20; width: 288px; background: var(--pop); border-radius: 12px; box-shadow: 0 0 0 1px var(--line-2), 0 16px 48px rgba(0,0,0,.55); padding: 8px; }
+.pop h5 { margin: 4px 8px 8px; font-size: 11px; font-weight: 600; color: var(--text-3); display: flex; }
+.pop h5 em { margin-left: auto; font-style: normal; font-weight: 400; }
+.opt { height: 32px; display: flex; align-items: center; gap: 10px; padding: 0 8px; border-radius: 6px; cursor: pointer; }
+.opt:hover { background: var(--chip); }
+.opt .cb { width: 14px; height: 14px; border-radius: 4px; box-shadow: inset 0 0 0 1.5px var(--text-3); display: grid; place-items: center; font-size: 10px; }
+.opt.on .cb { background: var(--accent); box-shadow: none; color: #1a0c00; }
+.opt .c { margin-left: auto; color: var(--text-3); font-size: 11px; }
+.opt .sw { width: 20px; display: grid; place-items: center; } .opt .sw i { border: 1.5px solid currentColor; border-radius: 2px; display: block; color: var(--text-2); }
+.sep { height: 1px; background: var(--line); margin: 6px 8px; }
+.pop .bars { display: flex; align-items: flex-end; gap: 2px; height: 72px; padding: 0 8px; }
+.pop .bars i { flex: 1; background: rgba(255,255,255,.18); border-radius: 2px 2px 0 0; } .pop .bars i.in { background: var(--accent); }
+.pop .axis { display: flex; justify-content: space-between; padding: 4px 8px 0; color: var(--text-3); font-size: 10px; }
+.presets { display: flex; flex-wrap: wrap; gap: 6px; padding: 8px; }
+.presets span { height: 24px; padding: 0 8px; border-radius: 12px; background: var(--chip); display: inline-flex; align-items: center; font-size: 11px; cursor: pointer; }
+
+/* Grid */
+.gridwrap { grid-column: 2 / 3; grid-row: 3; overflow: auto; background: var(--grid-bg); }
+.month { position: sticky; top: 0; z-index: 2; height: 40px; display: flex; align-items: center; gap: 8px; padding: 0 16px; background: linear-gradient(var(--grid-bg) 70%, rgba(27,27,30,0)); font-weight: 600; }
+.month span { color: var(--text-3); font-weight: 400; font-size: 11px; }
+.cells { display: grid; grid-template-columns: repeat(auto-fill, var(--cell)); gap: var(--gap); padding: 0 16px 16px; }
+.cell { width: var(--cell); height: var(--cell); border-radius: 8px; position: relative; cursor: pointer; display: grid; place-items: center; background: rgba(255,255,255,.035); }
+.cell .img { border-radius: 4px; width: 100%; height: 100%; }
+.cell.sel { outline: 2px solid var(--accent); outline-offset: 2px; }
+.cell .src { position: absolute; right: 6px; top: 6px; height: 18px; min-width: 18px; padding: 0 4px; border-radius: 4px; background: rgba(0,0,0,.55); color: #fff; font-size: 10px; display: grid; place-items: center; opacity: .85; }
+.cell .badge { position: absolute; left: 6px; bottom: 6px; display: flex; gap: 4px; opacity: 0; transition: opacity .12s; }
+.cell:hover .badge, .cell.sel .badge { opacity: 1; }
+.cell .badge span { height: 18px; padding: 0 5px; border-radius: 4px; background: rgba(0,0,0,.62); font-size: 10px; display: inline-flex; align-items: center; color: #fff; }
+
+/* Inspector */
+.inspector { grid-column: 3; grid-row: 2 / 4; border-left: 1px solid var(--line); background: var(--panel); overflow: auto; padding: 16px; display: flex; flex-direction: column; gap: 20px; }
+.preview { border-radius: 8px; width: 100%; }
+.head { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
+.label { font-size: 11px; font-weight: 600; color: var(--text-3); letter-spacing: .02em; }
+.srcbadge { height: 20px; padding: 0 8px; border-radius: 10px; font-size: 11px; font-weight: 600; display: inline-flex; align-items: center; gap: 4px; }
+.srcbadge.mj { background: var(--mj-soft); color: var(--mj); } .srcbadge.cam { background: rgba(90,200,250,.14); color: #5ac8fa; } .srcbadge.sd { background: rgba(48,209,88,.14); color: #30d158; } .srcbadge.unk { background: var(--chip); color: var(--text-2); }
+.prompt { font-size: 15px; line-height: 1.45; user-select: text; }
+.actions { display: flex; gap: 8px; margin-top: 12px; }
+.btn { all: unset; height: 28px; padding: 0 12px; border-radius: 7px; background: var(--chip); font-size: 12px; cursor: pointer; display: inline-flex; align-items: center; gap: 6px; }
+.btn.primary { background: var(--accent); color: #1a0c00; font-weight: 600; } .btn kbd { font: 10px -apple-system; opacity: .6; }
+.kv { display: grid; grid-template-columns: 96px 1fr; }
+.kv > div { height: 28px; display: flex; align-items: center; border-bottom: 1px solid var(--line); min-width: 0; gap: 6px; }
+.kv .k { color: var(--text-3); font-size: 12px; }
+.kv .v a { color: var(--text); text-decoration: none; padding: 2px 6px; margin-left: -6px; border-radius: 4px; cursor: pointer; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.kv .v a:hover { background: var(--accent-soft); color: var(--accent); }
+.kv .v small { color: var(--text-3); }
+.hint { font-size: 11px; color: var(--text-3); margin-left: auto; }
+
+.status { grid-column: 2 / 4; grid-row: 4; border-top: 1px solid var(--line); display: flex; align-items: center; gap: 16px; padding: 0 16px; font-size: 11px; color: var(--text-2); }
+.status .ok { color: #3ccf6e; } .prog { width: 96px; height: 4px; border-radius: 2px; background: var(--chip); overflow: hidden; } .prog i { display: block; height: 100%; width: 38%; background: var(--accent); }
+
+.notes { position: fixed; left: 40px; bottom: 72px; width: 232px; background: #fffbe6; color: #3a3000; border-radius: 10px; padding: 12px 14px; font-size: 12px; box-shadow: 0 8px 30px rgba(0,0,0,.4); z-index: 50; }
+.notes b { display: block; margin-bottom: 4px; } .notes button { all: unset; float: right; cursor: pointer; opacity: .6; }
+</style>
+</head>
+<body>
+<div class="window" id="win">
+  <aside class="sidebar">
+    <div class="lights"><i></i><i></i><i></i></div>
+    <div class="sec">
+      <h6>Libraries</h6>
+      <div class="row sel"><span class="ic">◫</span>Visual Archive<span class="ct num">24,310</span></div>
+      <div class="row"><span class="ic">◫</span>Photos 2024<span class="ct num">8,112</span></div>
+      <div class="row"><span class="ic">◫</span>Client refs<span class="ct">⏏︎</span></div>
+    </div>
+    <div class="sec">
+      <h6>Visual Archive</h6>
+      <div class="row"><span class="ic">◷</span>Recently Added<span class="ct num">412</span></div>
+      <div class="row"><span class="ic">✦</span>Generated<span class="ct num">15,880</span></div>
+      <div class="row"><span class="ic">◉</span>Photos<span class="ct num">6,904</span></div>
+      <div class="row"><span class="ic">▭</span>Screenshots<span class="ct num">1,526</span></div>
+    </div>
+    <div class="sec">
+      <h6>Saved Searches</h6>
+      <div class="row"><span class="ic">▾</span>Portraits</div>
+      <div class="row sub"><span class="dot" style="background:#ff7a1a"></span>Editorial, MJ v7 raw<span class="ct num">318</span></div>
+      <div class="row sub"><span class="dot" style="background:#5ac8fa"></span>35mm film photos<span class="ct num">146</span></div>
+      <div class="row"><span class="dot" style="background:#bf5af2"></span>Favourite style refs<span class="ct num">89</span></div>
+      <div class="row"><span class="dot" style="background:#30d158"></span>Wide, 2025<span class="ct num">1,204</span></div>
+    </div>
+    <div class="grow"></div>
+    <div class="row" style="color:var(--text-2)">＋ Open Folder…</div>
+  </aside>
+
+  <header class="toolbar">
+    <div class="title"><b>Visual Archive</b><span class="num" id="count"></span></div>
+    <div class="seg" id="fillfit"><button class="on" data-v="fill">Fill</button><button data-v="fit">Fit</button></div>
+    <input type="range" id="size" min="96" max="320" step="8" value="160" title="Thumbnail size">
+    <button class="tbtn">Newest First ▾</button>
+    <div class="spacer"></div>
+    <div class="search">⌕ <input placeholder="Search prompts, names, cameras…"></div>
+  </header>
+
+  <nav class="filterrow" id="filterrow"></nav>
+  <main class="gridwrap" id="gridwrap"></main>
+  <aside class="inspector" id="inspector"></aside>
+  <footer class="status">
+    <span class="ok">● Archive disk connected</span><span class="num">24,310 indexed</span><span class="spacer"></span>
+    <span class="num">Thumbnails 9,551 / 24,310</span><span class="prog"><i></i></span><span class="num">7.8 MB/s</span>
+  </footer>
+  <div class="pop" id="pop" hidden></div>
+</div>
+
+<div class="notes"><button onclick="this.parentNode.remove()">✕</button><b>Mockup v2 — invented images</b>
+Generic filters first. Pick <b style="display:inline">Source → Midjourney</b> (or click a MJ image's value) and the Midjourney group appears.
+Click a pill to open it; × clears it. The inspector changes with the source.</div>
+
+<script>
+let seed = 11; const rnd = () => (seed = (seed * 16807) % 2147483647) / 2147483647; const pick = a => a[Math.floor(rnd() * a.length)];
+const SCALE = 62;
+const ars = [["2:3", 2/3], ["16:9", 16/9], ["1:1", 1], ["4:5", .8], ["3:2", 1.5], ["9:16", 9/16], ["4:3", 4/3], ["21:9", 21/9]];
+const sources = ["mj", "mj", "mj", "mj", "cam", "cam", "sd", "shot", "unk"];
+const months = ["November 2026", "October 2026", "September 2026"];
+const subjects = ["a lighthouse keeper's kitchen at dawn", "portrait of an old fisherman, weathered skin", "a neon ramen stall in the rain", "isometric greenhouse full of ferns", "brutalist library interior, soft haze", "a paper boat on a glass lake", "editorial portrait, linen suit, harsh sun"];
+const styles = ["35mm film, Portra 400", "muted pastel palette", "cinematic lighting", "volumetric fog, 85mm", "golden hour"];
+const cams = [["Fujifilm X100V", "23mm f/2"], ["Sony A7 IV", "FE 35mm F1.8"], ["iPhone 16 Pro", "24mm"], ["Leica Q3", "28mm Summilux"]];
+const items = [];
+months.forEach(m => { for (let i = 0, n = 22 + Math.floor(rnd() * 8); i < n; i++) {
+  const src = pick(sources); let [ar, r] = pick(ars);
+  if (src === "cam") [ar, r] = pick([["3:2", 1.5], ["2:3", 2/3], ["4:3", 4/3]]);
+  if (src === "shot") [ar, r] = ["16:10", 1.6];
+  const it = { src, ar, r, month: m, type: src === "shot" || src === "sd" ? "PNG" : src === "cam" ? pick(["HEIC", "JPEG", "RAW"]) : pick(["PNG", "PNG", "WebP"]),
+    day: 1 + Math.floor(rnd() * 28), h: Math.floor(rnd() * 360), a: Math.floor(rnd() * 360), l1: 25 + rnd() * 35, l2: 20 + rnd() * 40, name: `img_${Math.floor(rnd() * 1e8).toString(36)}` };
+  if (src === "mj") { it.v = pick(["7", "7", "6.1", "niji 6"]); it.params = [["ar", ar], ["v", it.v]]; if (rnd() < .45) it.params.push(["raw", ""]); if (rnd() < .5) it.params.push(["stylize", String(pick([100, 250, 500]))]); if (rnd() < .3) it.params.push(["sref", String(Math.floor(rnd() * 4e9))]); it.prompt = `${pick(subjects)}, ${pick(styles)}`; }
+  if (src === "sd") { it.prompt = `${pick(subjects)}, highly detailed`; it.model = pick(["SDXL 1.0", "Flux.1 dev"]); it.steps = pick([20, 30]); it.cfg = pick([5, 7]); }
+  if (src === "cam") { [it.cam, it.lens] = pick(cams); it.iso = pick([100, 200, 400, 1600]); it.f = pick(["1.8", "2.8", "4", "8"]); it.sh = pick(["1/250", "1/1000", "1/60"]); }
+  items.push(it); } });
+
+const SRC = { mj: ["Midjourney", "✦", "mj"], cam: ["Camera", "◉", "cam"], sd: ["Stable Diffusion", "✧", "sd"], shot: ["Screenshot", "▭", "unk"], unk: ["Unknown", "?", "unk"] };
+const shapeOf = r => r > 1.9 ? "wide" : r > 1.05 ? "landscape" : r < .95 ? "portrait" : "square";
+const F = { type: new Set(), shape: new Set(), date: null, source: new Set(), version: new Set(), params: new Set(), camera: new Set() };
+let sel = 0, fit = false, openPop = null;
+
+const facetDefs = {
+  type: { label: "Type", get: it => [it.type] },
+  shape: { label: "Shape", get: it => [shapeOf(it.r), "ar:" + it.ar] },
+  source: { label: "Source", get: it => [it.src] },
+  version: { label: "Version", mj: true, get: it => it.src === "mj" ? [it.v] : [] },
+  params: { label: "Parameters", mj: true, all: true, get: it => it.src === "mj" ? it.params.filter(p => !["ar", "v"].includes(p[0])).map(p => p[0] === "stylize" ? "stylize " + p[1] : p[0]) : [] },
+  camera: { label: "Camera", cam: true, get: it => it.src === "cam" ? [it.cam] : [] },
+};
+function match(it, skip) {
+  for (const [k, d] of Object.entries(facetDefs)) {
+    if (k === skip || !F[k].size) continue;
+    const vals = d.get(it);
+    if (k === "shape") { const sh = [...F.shape].filter(x => !x.startsWith("ar:")), ra = [...F.shape].filter(x => x.startsWith("ar:"));
+      if (!(sh.includes(vals[0]) || ra.includes(vals[1]))) return false; continue; }
+    if (d.all ? ![...F[k]].every(x => vals.includes(x)) : !vals.some(x => F[k].has(x))) return false;
+  }
+  if (F.date && skip !== "date" && !F.date.months.includes(it.month)) return false;
+  return true;
+}
+const shown = () => items.filter(it => match(it));
+const counts = k => { const m = new Map(); items.filter(it => match(it, k)).forEach(it => facetDefs[k].get(it).forEach(v => m.set(v, (m.get(v) || 0) + 1))); return m; };
+const fmtVal = (k, v) => k === "source" ? SRC[v][0] : k === "version" ? (v.startsWith("niji") ? v : "v" + v) : k === "params" ? "--" + v : k === "shape" ? (v.startsWith("ar:") ? v.slice(3) : v[0].toUpperCase() + v.slice(1)) : v;
+const mjInView = () => F.source.has("mj") || (shown().length && shown().every(i => i.src === "mj"));
+const camInView = () => F.source.has("cam");
+
+function renderRow() {
+  const pill = (k) => { const d = facetDefs[k] || { label: "Date" }; const on = k === "date" ? !!F.date : F[k].size > 0;
+    const vals = k === "date" ? (F.date ? [F.date.label] : []) : [...F[k]].map(v => fmtVal(k, v));
+    const v = vals.length > 2 ? `${vals.slice(0, 2).join(", ")} +${vals.length - 2}` : vals.join(", ");
+    return `<button class="pill ${on ? "on" : ""}" data-pill="${k}"><span class="k">${d.label}${on ? ":" : ""}</span>${on ? `<span class="v">${v}</span><span class="x" data-clr="${k}">✕</span>` : "▾"}</button>`; };
+  let html = ["type", "shape", "date", "source"].map(pill).join("");
+  if (mjInView()) html += `<div class="group"><span class="tag">✦ Midjourney</span>${pill("version")}${pill("params")}</div>`;
+  if (camInView()) html += `<div class="group"><span class="tag" style="color:#5ac8fa">◉ Camera</span>${pill("camera")}</div>`;
+  html += `<button class="pill add">＋ Filter</button><span class="spacer"></span>`;
+  const any = Object.values(F).some(x => x && (x.size || x.label));
+  if (any) html += `<button class="clear" id="clearall">Clear</button><button class="save">Save Search… ⌘S</button>`;
+  document.getElementById("filterrow").innerHTML = html;
+  document.getElementById("count").textContent = `${(shown().length * SCALE).toLocaleString()} of 24,310 images`;
+}
+
+function renderPop(k, anchor) {
+  const pop = document.getElementById("pop"); const win = document.getElementById("win").getBoundingClientRect(); const a = anchor.getBoundingClientRect();
+  pop.style.left = (a.left - win.left) + "px"; pop.style.top = (a.bottom - win.top + 6) + "px";
+  let html = "";
+  const opt = (k, v, label, extra = "") => { const c = counts(k).get(v) || 0; const on = F[k].has(v);
+    return `<div class="opt ${on ? "on" : ""}" data-k="${k}" data-v="${v}"><span class="cb">${on ? "✓" : ""}</span>${extra}${label}<span class="c num">${(c * SCALE).toLocaleString()}</span></div>`; };
+  if (k === "shape") {
+    const sw = { portrait: [9, 13], landscape: [13, 9], square: [11, 11], wide: [15, 7] };
+    html += `<h5>Orientation<em>any of</em></h5>` + ["portrait", "landscape", "square", "wide"].map(s => opt("shape", s, fmtVal("shape", s), `<span class="sw"><i style="width:${sw[s][0]}px;height:${sw[s][1]}px"></i></span>`)).join("");
+    html += `<div class="sep"></div><h5>Exact ratio</h5>` + [...counts("shape").keys()].filter(x => x.startsWith("ar:")).sort().map(v => opt("shape", v, `<span class="mono">${v.slice(3)}</span>`)).join("");
+  } else if (k === "date") {
+    html += `<h5>Created<em>embedded date, else file date</em></h5><div class="bars">${Array.from({ length: 34 }, (_, i) => `<i class="${F.date && i > 24 && i < 31 ? "in" : ""}" style="height:${12 + Math.abs(Math.sin(i * .6) * 46) + (i > 24 ? 12 : 0)}px"></i>`).join("")}</div><div class="axis"><span>2024</span><span>2025</span><span>Nov 2026</span></div>
+      <div class="presets"><span data-date="30">Last 30 days</span><span data-date="q">Sep – Nov 2026</span><span>2025</span><span>2024</span><span>Custom…</span></div>`;
+  } else {
+    const d = facetDefs[k]; html += `<h5>${d.label}<em>${d.all ? "all of" : "any of"}</em></h5>`;
+    html += [...counts(k).entries()].sort((a, b) => b[1] - a[1]).map(([v]) => opt(k, v, k === "params" ? `<span class="mono">${fmtVal(k, v)}</span>` : k === "source" ? `${SRC[v][1]}&nbsp; ${fmtVal(k, v)}` : fmtVal(k, v))).join("");
+  }
+  pop.innerHTML = html; pop.hidden = false; openPop = k;
+}
+
+function renderGrid() {
+  const list = shown(); if (list.length && !list.includes(items[sel])) sel = items.indexOf(list[0]);
+  let html = "";
+  months.forEach(m => { const its = list.filter(i => i.month === m); if (!its.length) return;
+    html += `<div class="month">${m}<span class="num">${(its.length * SCALE).toLocaleString()}</span></div><div class="cells">`;
+    its.forEach(it => { const i = items.indexOf(it); const w = fit ? (it.r >= 1 ? "100%" : it.r * 100 + "%") : "100%", h = fit ? (it.r >= 1 ? 100 / it.r + "%" : "100%") : "100%";
+      html += `<div class="cell ${i === sel ? "sel" : ""}" data-i="${i}"><div class="img" style="width:${w};height:${h};background:linear-gradient(${it.a}deg,hsl(${it.h} 50% ${it.l1}%),hsl(${(it.h + 70) % 360} 55% ${it.l2}%))"></div>
+        <span class="src" title="${SRC[it.src][0]}">${SRC[it.src][1]}</span><div class="badge"><span class="mono">${it.ar}</span><span>${it.type}</span></div></div>`; });
+    html += "</div>"; });
+  document.getElementById("gridwrap").innerHTML = html || `<div style="display:grid;place-items:center;height:100%;color:var(--text-3)">No images match these filters.</div>`;
+}
+
+function renderInspector() {
+  const it = items[sel]; const [sname, sico, scls] = SRC[it.src];
+  const link = (k, v, label) => `<a class="mono" data-f="${k}" data-v="${v}" title="Filter by this">${label ?? v}</a>`;
+  let html = `<div class="img preview" style="aspect-ratio:${it.r};${it.r < 1.2 ? `width:${Math.round(280 * it.r)}px;height:280px;align-self:center;` : ""}background:linear-gradient(${it.a}deg,hsl(${it.h} 50% ${it.l1}%),hsl(${(it.h + 70) % 360} 55% ${it.l2}%))"></div>`;
+  if (it.prompt) {
+    const full = it.params ? `${it.prompt} ${it.params.map(([k, v]) => v ? `--${k} ${v}` : `--${k}`).join(" ")}` : it.prompt;
+    html += `<div><div class="head"><span class="srcbadge ${scls}">${sico} ${sname}</span><span class="hint">click a value to filter</span></div>
+      <div class="prompt">${it.prompt}</div>
+      <div class="actions"><button class="btn primary" data-copy="${full.replace(/"/g, "&quot;")}">Copy Prompt <kbd>⌘C</kbd></button><button class="btn">Text</button>${it.params ? '<button class="btn">Params</button>' : ""}</div></div>`;
+    if (it.src === "mj") html += `<div><div class="label">MIDJOURNEY</div><div class="kv" style="margin-top:4px">${it.params.map(([k, v]) =>
+      `<div class="k">${{ ar: "Aspect", v: "Version", raw: "Style", stylize: "Stylize", sref: "Style ref" }[k]}</div><div class="v">${k === "ar" ? link("shape", "ar:" + v, v) : k === "v" ? link("version", v) : k === "raw" ? link("params", "raw", "raw") : k === "stylize" ? link("params", "stylize " + v, v) : link("params", "sref", v) + "<small>⧉</small>"}</div>`).join("")}</div></div>`;
+    if (it.src === "sd") html += `<div><div class="label">GENERATION</div><div class="kv" style="margin-top:4px"><div class="k">Model</div><div class="v">${it.model}</div><div class="k">Steps</div><div class="v num">${it.steps}</div><div class="k">CFG</div><div class="v num">${it.cfg}</div></div></div>`;
+  } else {
+    html += `<div class="head"><span class="srcbadge ${scls}">${sico} ${sname}</span></div>`;
+  }
+  if (it.src === "cam") html += `<div><div class="label">CAMERA</div><div class="kv" style="margin-top:4px"><div class="k">Camera</div><div class="v">${link("camera", it.cam)}</div><div class="k">Lens</div><div class="v">${it.lens}</div><div class="k">Exposure</div><div class="v num">ƒ/${it.f} · ${it.sh} s · ISO ${it.iso}</div></div></div>`;
+  const dims = it.r >= 1 ? `${Math.round(3000)} × ${Math.round(3000 / it.r)}` : `${Math.round(3000 * it.r)} × 3000`;
+  html += `<div><div class="label">FILE</div><div class="kv" style="margin-top:4px">
+    <div class="k">Created</div><div class="v num">${it.day} ${it.month.slice(0, 3)} ${it.month.split(" ")[1]}, 14:${String(it.day + 10).padStart(2, "0")}<small>${it.src === "unk" || it.src === "shot" ? "file date" : it.src === "cam" ? "EXIF" : "embedded"}</small></div>
+    <div class="k">Dimensions</div><div class="v num">${dims} <small>${link("shape", "ar:" + it.ar, it.ar)}</small></div>
+    <div class="k">Type</div><div class="v">${link("type", it.type)} <small>· 3.1 MB</small></div>
+    <div class="k">Name</div><div class="v"><span class="mono">${it.name}.${it.type.toLowerCase()}</span></div>
+  </div></div><div class="actions" style="margin-top:0"><button class="btn">Show in Finder</button><button class="btn">Open With ▾</button></div>`;
+  document.getElementById("inspector").innerHTML = html;
+}
+const all = () => { renderRow(); renderGrid(); renderInspector(); if (openPop) { const a = document.querySelector(`[data-pill="${openPop}"]`); a ? renderPop(openPop, a) : closePop(); } };
+const closePop = () => { document.getElementById("pop").hidden = true; openPop = null; };
+
+document.addEventListener("click", e => {
+  const x = e.target.closest("[data-clr]"); if (x) { const k = x.dataset.clr; k === "date" ? F.date = null : F[k].clear(); closePop(); all(); return; }
+  const p = e.target.closest("[data-pill]"); if (p) { if (p.dataset.pill === openPop) { closePop(); return; } renderPop(p.dataset.pill, p); return; }
+  const o = e.target.closest(".opt"); if (o) { const s = F[o.dataset.k]; s.has(o.dataset.v) ? s.delete(o.dataset.v) : s.add(o.dataset.v); all(); return; }
+  const dp = e.target.closest("[data-date]"); if (dp) { F.date = { label: dp.textContent, months: dp.dataset.date === "30" ? ["November 2026"] : months }; all(); return; }
+  if (e.target.closest("#pop")) return;
+  const c = e.target.closest(".cell"); if (c) { sel = +c.dataset.i; closePop(); renderGrid(); renderInspector(); return; }
+  const f = e.target.closest("[data-f]"); if (f) { const k = f.dataset.f, v = f.dataset.v; if (k === "version" || k === "params") F.source.add("mj"); if (k === "camera") F.source.add("cam"); F[k].add(v); all(); return; }
+  const cp = e.target.closest("[data-copy]"); if (cp) { navigator.clipboard?.writeText(cp.dataset.copy); cp.firstChild.textContent = "Copied "; setTimeout(() => cp.firstChild.textContent = "Copy Prompt ", 900); return; }
+  if (e.target.id === "clearall") { Object.keys(F).forEach(k => k === "date" ? F.date = null : F[k].clear()); closePop(); all(); return; }
+  const b = e.target.closest("#fillfit button"); if (b) { fit = b.dataset.v === "fit"; document.querySelectorAll("#fillfit button").forEach(y => y.classList.toggle("on", y === b)); renderGrid(); return; }
+  closePop();
+});
+document.getElementById("size").oninput = e => document.documentElement.style.setProperty("--cell", e.target.value + "px");
+F.shape.add("portrait");
+all();
+</script>
+</body>
+</html>

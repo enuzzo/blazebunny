@@ -311,8 +311,14 @@ prefetch and caching), then the full-screen viewer (M6), then the remaining stag
 Known problems to fix first (owner and measurements):
 - [x] Animated backdrops removed (owner: speed beats flourish): the window light and the sidebar glow are
       now still gradients. Idle CPU went from **9 to 16% to 0.0%** (measured with `ps`).
-- [ ] **Stutter when opening and closing the sidebars** (owner): re-check after the backdrop change; the
-      other suspect is a full grid relayout and reload on every width change.
+- [ ] **Stutter when opening and closing the sidebars** (owner): re-check after the backdrop change. The
+      owner's diagnosis: while a sidebar opens or closes the grid width changes every frame, so the
+      number of columns changes and the thumbnails jump; with 23k items each relayout also costs time.
+      Fix: do not relayout on every frame of the window animation (keep the current layout while the
+      width is moving, compute the new one once at the end), then **animate the reflow** (cells glide from
+      old to new positions in about 0.2 to 0.3 s with an ease-out; animate only visible cells, the rest
+      take their final place at once; none when Reduce Motion is on). Same treatment for the thumbnail
+      size slider and the Fill/Fit and layout-mode switches.
 - [ ] **Dragging libraries to reorder is inconsistent** (owner): the `.onMove` in the sidebar list competes
       with the selection, the double-tap rename and the slow-click gestures; make drag reliable (and ready
       for grouping libraries in stage 2).

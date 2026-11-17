@@ -6,6 +6,7 @@ import BlazebunnyCore
 /// Prompt and Midjourney/Generation for generated images, Camera for photos, File always.
 struct InspectorView: View {
     let model: LibraryModel
+    @State private var copiedExposure = false
 
     var body: some View {
         if let d = model.detail {
@@ -19,6 +20,7 @@ struct InspectorView: View {
                     if let m = d.metadata {
                         header(m)
                         if let text = m.promptText { promptSection(m, text) }
+                        else if m.source == .camera, let e = m.camera?.exposureSummary { exposureAction(e) }
                         if let p = m.prompt, !p.parameters.isEmpty { midjourneySection(p) }
                         if let g = m.generator { generationSection(g) }
                         if let c = m.camera, m.source == .camera { cameraSection(c) }
@@ -138,6 +140,23 @@ struct InspectorView: View {
         }
     }
 
+    /// For a photo there is no prompt, so the one filled button copies its exposure.
+    func exposureAction(_ exposure: String) -> some View {
+        Button {
+            NSPasteboard.general.clearContents()
+            NSPasteboard.general.setString(exposure, forType: .string)
+            copiedExposure = true
+            Task { @MainActor in
+                try? await Task.sleep(for: .seconds(1.4))
+                copiedExposure = false
+            }
+        } label: {
+            Text(copiedExposure ? "Copied" : "Copy Exposure")
+        }
+        .buttonStyle(.borderedProminent)
+        .help("Copy the exposure (\(exposure))")
+    }
+
     func cameraSection(_ c: CameraInfo) -> some View {
         InfoTable(title: "Camera") {
             if let cam = c.camera { InfoRow(label: "Camera") { FilterLink(cam, mono: false) { model.addFilter(.camera, cam) } } }
@@ -225,6 +244,7 @@ struct InfoTable<Content: View>: View {
 struct InfoRow<Value: View>: View {
     let label: String
     @ViewBuilder var value: Value
+    @State private var hover = false
     var body: some View {
         HStack(alignment: .firstTextBaseline, spacing: DS.Space.s) {
             Text(label).foregroundStyle(.secondary).frame(width: DS.Size.inspectorLabel, alignment: .leading)
@@ -233,7 +253,9 @@ struct InfoRow<Value: View>: View {
         }
         .dsText(.label)
         .frame(minHeight: DS.Size.control)
-        .overlay(alignment: .bottom) { Rectangle().fill(DS.Palette.rowRule).frame(height: 1) }
+        // Value rows carry no rule: the column grid and a quiet hover highlight do the work.
+        .background(hover ? Color.white.opacity(0.04) : .clear, in: RoundedRectangle(cornerRadius: DS.Radius.small))
+        .onHover { hover = $0 }
     }
 }
 

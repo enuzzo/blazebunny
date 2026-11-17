@@ -58,6 +58,42 @@ enum SidebarItem: Hashable {
     case library(String)
     case view(BuiltInView)
     case saved(Int64)
+    /// A folder of the open library, by its path relative to the library root.
+    case folder(String)
+}
+
+/// The library's folder tree prepared for the sidebar: children sorted by name once, off the main thread.
+struct FolderTree: Equatable {
+    var nodes: [String: DirNode] = [:]
+    /// Children by parent path ("" is the library root), shown folders only, alphabetical.
+    var children: [String: [DirNode]] = [:]
+
+    init() {}
+
+    /// Folders that hold no image anywhere below them are left out: a folder of documents or an
+    /// empty one would only add noise to an image browser.
+    init(_ list: [DirNode]) {
+        var byID: [Int64: DirNode] = [:]
+        for n in list { byID[n.id] = n }
+        for n in list {
+            nodes[n.path] = n
+            guard n.subtreeCount > 0 else { continue }
+            let parentPath = n.parentID.flatMap { byID[$0]?.path } ?? ""
+            children[parentPath, default: []].append(n)
+        }
+        for key in children.keys {
+            children[key]!.sort { $0.name.localizedStandardCompare($1.name) == .orderedAscending }
+        }
+    }
+    var isEmpty: Bool { children.isEmpty }
+}
+
+/// One visible row of the Folders section.
+struct FolderRow: Identifiable, Equatable {
+    var node: DirNode
+    var id: String { node.path }
+    var hasChildren: Bool
+    var isExpanded: Bool
 }
 
 /// Named colours for saved searches.
@@ -86,7 +122,7 @@ final class LibraryModel {
     var currentPath: String?
     private(set) var library: Library?
     private(set) var items: [BrowseItem] = []
-    var query = SearchQuery() { didSet { if query != oldValue { queryChanged(textOnly: query.filter == oldValue.filter && query.sort == oldValue.sort) } } }
+    var query = SearchQuery() { didSet { if query != oldValue { queryChanged(textOnly: query.filter == oldValue.filter && query.sort == oldValue.sort && query.folder == oldValue.folder) } } }
     var sidebarSelection: SidebarItem?
     var savedSearches: [SavedSearch] = []
     var cellSize: Double = 160
@@ -110,16 +146,24 @@ final class LibraryModel {
     private(set) var facetValues: [Facet: [FacetValue]] = [:]
     private(set) var histogram: [MonthCount] = []
     var openFacet: Facet?
+    /// The library's folders, for the sidebar.
+    private(set) var folderTree = FolderTree()
+    /// Paths of the folders shown open in the sidebar. Remembered per library, except for ghosts.
+    private(set) var expandedFolders: Set<String> = []
+    /// True while only the first screen of a new result is shown and the rest is still loading.
+    private(set) var isPartialPage = false
 
     @ObservationIgnored let thumbnails = ThumbnailLoader()
     @ObservationIgnored private var scanner: FolderScanner?
     @ObservationIgnored private var scanTask: Task<Void, Never>?
     @ObservationIgnored private var reloadTask: Task<Void, Never>?
+    @ObservationIgnored private var pendingRefresh = true
     @ObservationIgnored private var lastProgressReload = Date.distantPast
     @ObservationIgnored private var observers: [Any] = []
 
     private static let savedKey = "savedLibraries"
     private static let currentKey = "currentLibrary"
+    private static let expandedKey = "expandedFolders"
 
     init() {
         // A crashed session may have left ghost data behind: nothing is open yet, so remove it all.
@@ -155,7 +199,51 @@ final class LibraryModel {
         switch sidebarSelection {
         case .view(let v): return v.title
         case .saved(let id): return savedSearches.first(where: { $0.id == id })?.name ?? currentLibraryName
+        case .folder(let path): return (path as NSString).lastPathComponent
         default: return currentLibraryName
+        }
+    }
+
+    /// One crumb of the context line above the title.
+    struct Crumb: Identifiable {
+        let id: String
+        let title: String
+        /// Where a click goes; nil for plain text.
+        let target: SidebarItem?
+    }
+
+    /// What the grid shows and where it is, for the 11 pt line above the title.
+    /// For a folder: "Folder · files › Renders" (the library, then the folders above this one).
+    var contextKind: String {
+        if currentIsGhost { return "Ghost · temporary" }
+        switch sidebarSelection {
+        case .folder: return "Folder"
+        case .saved: return "Saved search"
+        case .view: return "View"
+        default: return "Library"
+        }
+    }
+
+    var contextCrumbs: [Crumb] {
+        guard let path = currentPath else { return [] }
+        let libCrumb = Crumb(id: "lib", title: currentLibraryName, target: .library(path))
+        switch sidebarSelection {
+        case .folder(let p):
+            var crumbs = [libCrumb]
+            var acc = ""
+            for part in p.split(separator: "/").dropLast() {
+                acc = acc.isEmpty ? String(part) : acc + "/" + part
+                crumbs.append(Crumb(id: acc, title: String(part), target: .folder(acc)))
+            }
+            return crumbs
+        case .saved:
+            var crumbs = [Crumb(id: "in", title: "live · in " + currentLibraryName, target: .library(path))]
+            if let f = query.folder { crumbs.append(Crumb(id: "f", title: f.replacingOccurrences(of: "/", with: " › "), target: .folder(f))) }
+            return crumbs
+        case .view:
+            return [Crumb(id: "in", title: "in " + currentLibraryName, target: .library(path))]
+        default:
+            return [Crumb(id: "all", title: "everything, subfolders included", target: nil)]
         }
     }
 
@@ -239,6 +327,8 @@ final class LibraryModel {
         selection = []
         savedSearches = []
         sidebarSelection = nil
+        folderTree = FolderTree()
+        expandedFolders = []
     }
 
     /// Gives a library a display name; an empty name goes back to the folder name.
@@ -256,13 +346,14 @@ final class LibraryModel {
     func remove(_ lib: SavedLibrary) {
         saved.removeAll { $0.path == lib.path }
         persist()
+        var all = UserDefaults.standard.dictionary(forKey: Self.expandedKey) as? [String: [String]] ?? [:]
+        if all.removeValue(forKey: lib.path) != nil { UserDefaults.standard.set(all, forKey: Self.expandedKey) }
         if currentPath == lib.path { dropCurrentLibrary() }
     }
 
     func select(path: String) {
         if path == currentPath, library != nil {
-            sidebarSelection = .library(path)
-            apply(SearchQuery(sort: query.sort))
+            apply(SearchQuery(sort: query.sort), selecting: .library(path))
             return
         }
         stopScan()
@@ -276,6 +367,8 @@ final class LibraryModel {
         progress = nil
         errorMessage = nil
         query = SearchQuery()
+        folderTree = FolderTree()
+        expandedFolders = currentLibrary?.isGhost == true ? [] : Self.storedExpansion(for: path)
         do {
             let lib: Library
             if let base = currentLibrary?.ghostBase {
@@ -291,7 +384,7 @@ final class LibraryModel {
             library = nil
             return
         }
-        scheduleReload(delay: 0)
+        scheduleReload(delay: 0, refresh: true)
         refreshOnline()
         if isOnline { startScan() }
     }
@@ -302,18 +395,64 @@ final class LibraryModel {
         case .library(let path):
             select(path: path)
         case .view(let v):
-            sidebarSelection = item
-            apply(SearchQuery(filter: v.filter, sort: query.sort))
+            apply(SearchQuery(filter: v.filter, sort: query.sort), selecting: item)
         case .saved(let id):
-            sidebarSelection = item
-            if let s = savedSearches.first(where: { $0.id == id }) { apply(s.query) }
+            if let s = savedSearches.first(where: { $0.id == id }) { apply(s.query, selecting: item) } else { sidebarSelection = item }
+        case .folder(let path):
+            // A folder shows everything inside it, subfolders included; filters start clean.
+            expandAncestors(of: path)
+            apply(SearchQuery(sort: query.sort, folder: path), selecting: item)
         }
     }
 
-    private func apply(_ q: SearchQuery) {
-        let keep = sidebarSelection
+    private func apply(_ q: SearchQuery, selecting item: SidebarItem) {
+        sidebarSelection = item
         query = q
-        sidebarSelection = keep
+        sidebarSelection = item
+        // A change of scope is a change of view: a stale selection would point into the old one.
+        if !selection.isEmpty { selection = [] }
+    }
+
+    // MARK: - Folders
+
+    /// Rows of the Folders section: the tree flattened, open folders only.
+    var folderRows: [FolderRow] {
+        var out: [FolderRow] = []
+        func walk(_ parent: String) {
+            for n in folderTree.children[parent] ?? [] {
+                let kids = folderTree.children[n.path]?.isEmpty == false
+                let open = kids && expandedFolders.contains(n.path)
+                out.append(FolderRow(node: n, hasChildren: kids, isExpanded: open))
+                if open { walk(n.path) }
+            }
+        }
+        walk("")
+        return out
+    }
+
+    func toggleFolder(_ path: String) {
+        if expandedFolders.contains(path) { expandedFolders.remove(path) } else { expandedFolders.insert(path) }
+        storeExpansion()
+    }
+
+    private func expandAncestors(of path: String) {
+        var p = (path as NSString).deletingLastPathComponent
+        var changed = false
+        while !p.isEmpty { changed = expandedFolders.insert(p).inserted || changed; p = (p as NSString).deletingLastPathComponent }
+        if changed { storeExpansion() }
+    }
+
+    private func storeExpansion() {
+        // A ghost leaves no trace, not even which of its folders were open.
+        guard let path = currentPath, currentLibrary?.isGhost != true else { return }
+        var all = UserDefaults.standard.dictionary(forKey: Self.expandedKey) as? [String: [String]] ?? [:]
+        all[path] = expandedFolders.sorted()
+        UserDefaults.standard.set(all, forKey: Self.expandedKey)
+    }
+
+    private static func storedExpansion(for path: String) -> Set<String> {
+        let all = UserDefaults.standard.dictionary(forKey: expandedKey) as? [String: [String]] ?? [:]
+        return Set(all[path] ?? [])
     }
 
     private func resolvedURL(for path: String) -> URL {
@@ -473,8 +612,9 @@ final class LibraryModel {
         guard let lib = library else { return }
         let q = query
         Task.detached(priority: .userInitiated) {
-            let values = facet == .date ? [] : ((try? lib.index.facetCounts(facet, filter: q.filter, search: q.text)) ?? [])
-            let hist = facet == .date ? ((try? lib.index.monthHistogram(filter: q.filter, search: q.text)) ?? []) : []
+            let folder = q.folder.flatMap { try? lib.index.dirID(forPath: $0) } ?? nil
+            let values = facet == .date ? [] : ((try? lib.index.facetCounts(facet, filter: q.filter, search: q.text, folder: folder)) ?? [])
+            let hist = facet == .date ? ((try? lib.index.monthHistogram(filter: q.filter, search: q.text, folder: folder)) ?? []) : []
             await MainActor.run { [weak self] in
                 guard let self, self.library === lib else { return }
                 if facet == .date { self.histogram = hist } else { self.facetValues[facet] = values }
@@ -483,7 +623,7 @@ final class LibraryModel {
     }
 
     private func queryChanged(textOnly: Bool) {
-        scheduleReload(delay: textOnly ? 0.12 : 0)
+        scheduleReload(delay: textOnly ? 0.12 : 0, phased: !textOnly)
         if let f = openFacet { loadFacet(f) }
     }
 
@@ -532,7 +672,7 @@ final class LibraryModel {
         let interval: TimeInterval = items.isEmpty ? 0.3 : 3
         if p.phase == .done || Date().timeIntervalSince(lastProgressReload) > interval {
             lastProgressReload = Date()
-            scheduleReload(delay: 0)
+            scheduleReload(delay: 0, refresh: true)
         }
         // Thumbnails are made alongside metadata, so retry as soon as any exist.
         if p.thumbnailsDone > 0 || p.phase == .done { thumbnails.retryMissing() }
@@ -540,30 +680,50 @@ final class LibraryModel {
 
     // MARK: - Grid data
 
-    private func scheduleReload(delay: TimeInterval) {
+    /// Reloads what the grid shows. `phased` first publishes the first screen of rows (a few ms even on
+    /// 100k items) and then the full result. `refresh` also re-reads the library-wide numbers (counts,
+    /// folder tree): they do not change when only a filter does, so a filter change skips them.
+    private func scheduleReload(delay: TimeInterval, phased: Bool = false, refresh: Bool = false) {
         reloadTask?.cancel()
+        pendingRefresh = pendingRefresh || refresh
         guard let lib = library else { return }
         let q = query
+        let doRefresh = pendingRefresh
         reloadTask = Task { [weak self] in
             if delay > 0 { try? await Task.sleep(for: .seconds(delay)) }
             if Task.isCancelled { return }
-            let result = await Task.detached(priority: .userInitiated) { () -> ([BrowseItem], LibraryIndex.Counts, [FacetValue], LibrarySummary, Date?)? in
-                guard let items = try? lib.index.items(filter: q.filter, search: q.text, sort: q.sort),
-                      let counts = try? lib.index.counts() else { return nil }
-                let sources = (try? lib.index.facetCounts(.source, filter: q.filter, search: q.text)) ?? []
-                let summary = (try? lib.index.summary(filter: q.filter, search: q.text)) ?? LibrarySummary()
-                let created = try? lib.index.createdAt()
-                return (items, counts, sources, summary, created ?? nil)
+            if phased {
+                let page = await Task.detached(priority: .userInitiated) { () -> [BrowseItem]? in
+                    let folder = q.folder.flatMap { try? lib.index.dirID(forPath: $0) } ?? nil
+                    return try? lib.index.items(filter: q.filter, search: q.text, sort: q.sort, folder: folder, limit: 400)
+                }.value
+                guard !Task.isCancelled, let self, self.library === lib, let page else { return }
+                self.items = page
+                self.isPartialPage = true
+            }
+            typealias Result = ([BrowseItem], LibraryIndex.Counts?, FolderTree?, [FacetValue], LibrarySummary, Date?)
+            let result = await Task.detached(priority: .userInitiated) { () -> Result? in
+                let folder = q.folder.flatMap { try? lib.index.dirID(forPath: $0) } ?? nil
+                guard let items = try? lib.index.items(filter: q.filter, search: q.text, sort: q.sort, folder: folder) else { return nil }
+                let counts = doRefresh ? try? lib.index.counts() : nil
+                let tree = doRefresh ? (try? lib.index.directoryTree()).map(FolderTree.init) : nil
+                let sources = (try? lib.index.facetCounts(.source, filter: q.filter, search: q.text, folder: folder)) ?? []
+                let summary = (try? lib.index.summary(filter: q.filter, search: q.text, folder: folder)) ?? LibrarySummary()
+                let created = doRefresh ? (try? lib.index.createdAt()) ?? nil : nil
+                return (items, counts, tree, sources, summary, created)
             }.value
-            guard !Task.isCancelled, let self, let (items, counts, sources, summary, created) = result, self.library === lib else { return }
+            guard !Task.isCancelled, let self, let (items, counts, tree, sources, summary, created) = result, self.library === lib else { return }
+            if doRefresh { self.pendingRefresh = false }
+            self.isPartialPage = false
             if items != self.items { self.items = items }
             // An image selected before its metadata was read would stay on "Reading metadata…".
             if let d = self.detail, d.metadata == nil, !d.metadataFailed {
                 self.detail = try? lib.index.detail(id: d.id)
             }
-            self.counts = counts
+            if let counts { self.counts = counts }
+            if let tree, tree != self.folderTree { self.folderTree = tree }
             if summary != self.summary { self.summary = summary }
-            self.libraryCreatedAt = created
+            if doRefresh { self.libraryCreatedAt = created }
             self.sourceCounts = Dictionary(uniqueKeysWithValues: sources.compactMap { v in ItemSource(rawValue: v.value).map { ($0, v.count) } })
         }
     }

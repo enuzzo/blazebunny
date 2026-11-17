@@ -1,0 +1,296 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Blazebunny · inspector mockup</title>
+<style>
+@font-face { font-family: "Space Grotesk"; src: url("fonts/SpaceGrotesk-wght.ttf") format("truetype"); font-weight: 300 700; }
+@font-face { font-family: "Space Mono"; src: url("fonts/SpaceMono-Regular.ttf") format("truetype"); font-weight: 400; }
+@font-face { font-family: "Space Mono"; src: url("fonts/SpaceMono-Bold.ttf") format("truetype"); font-weight: 700; }
+:root {
+  --window: #0C0D0F; --hair: rgba(255,255,255,.09); --rule: rgba(255,255,255,.10); --stroke: rgba(255,255,255,.20);
+  --t1: rgba(255,255,255,.86); --t2: rgba(255,255,255,.55); --glass: rgba(255,255,255,.045);
+  --accent: #3E8BFF; --accent-fill: rgba(62,139,255,.20); --accent-text: #8DB8FF;
+  --ghost: #F2B861; --warn: #F57361; --bar: rgba(255,255,255,.45); --track: rgba(255,255,255,.08);
+  --mj: #ADB8FF; --sd: #8ED6A0; --cam: #7CCFE3; --loc: #E2ABC6;
+  /* Inspector grid tokens (px) */
+  --iw: 352px; --pad: 16px;
+  --bar-w: 72px; --count-w: 56px; --col-gap: 12px;      /* bar tables: label 1fr | bar 72 | count 56, gaps 12 */
+  --kv-label: 92px; --kv-copy: 20px; --kv-gap: 6px;     /* value tables: label 92 | value 1fr | copy 20, gaps 6 */
+}
+* { box-sizing: border-box; }
+html, body { height: 100%; }
+body { margin: 0; background: #050506; color: var(--t1); font: 400 13px/1.3 "Space Grotesk", -apple-system, system-ui, sans-serif;
+  display: flex; flex-direction: column; gap: 8px; padding: 10px 12px 12px; user-select: none; -webkit-user-select: none; overflow: hidden; }
+.mono { font-family: "Space Mono", ui-monospace, monospace; }
+button { font: inherit; color: inherit; background: none; border: 0; padding: 0; cursor: default; }
+svg.i { display: block; flex: none; }
+
+/* Mockup controls: outside the app window */
+.demo { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; font-size: 12px; color: var(--t2); }
+.demo b { font-weight: 600; color: var(--t1); margin-right: 2px; } .demo .lbl { margin-left: 10px; }
+.demo button, .demo a { height: 24px; padding: 0 9px; border-radius: 12px; box-shadow: inset 0 0 0 1px var(--stroke); color: var(--t1); font-size: 12px; text-decoration: none; display: inline-flex; align-items: center; }
+.demo button:hover, .demo a:hover { background: rgba(255,255,255,.07); } .demo button.on { background: var(--accent-fill); color: var(--accent-text); box-shadow: none; }
+.demo .tok { margin-left: auto; font: 10.5px "Space Mono"; }
+
+.window { position: relative; flex: 1; min-height: 0; display: grid; grid-template-rows: minmax(0,1fr); grid-template-columns: minmax(0,1fr) var(--iw); border-radius: 14px; overflow: hidden;
+  background: radial-gradient(900px 520px at 8% -12%, rgba(76,87,115,.38), transparent 62%), radial-gradient(700px 420px at 100% 110%, rgba(76,87,115,.14), transparent 60%), var(--window);
+  box-shadow: 0 0 0 1px rgba(255,255,255,.10), 0 30px 80px rgba(0,0,0,.6); }
+.content { position: relative; display: flex; flex-direction: column; min-width: 0; min-height: 0; }
+.content.ghost::after { content: ""; position: absolute; inset: 5px; border: 1.5px dashed rgba(242,184,97,.7); border-radius: 12px; pointer-events: none; }
+.header { height: 52px; flex: none; display: flex; align-items: center; gap: 12px; padding: 0 16px; border-bottom: 1px solid var(--hair); }
+.ttl { display: flex; flex-direction: column; justify-content: center; min-width: 0; }
+.scopeline { font-size: 11px; color: var(--t2); height: 14px; white-space: nowrap; } .scopeline b { font-weight: 600; } .scopeline .am { color: var(--ghost); } .scopeline .wn { color: var(--warn); } .scopeline .lv { color: var(--accent-text); }
+.title { font-size: 20px; font-weight: 500; letter-spacing: -.3px; line-height: 24px; display: flex; align-items: baseline; gap: 10px; white-space: nowrap; }
+.title .n { font: 11.5px "Space Mono"; color: var(--t2); letter-spacing: 0; } .title .u { font-size: 12px; color: var(--t2); letter-spacing: 0; margin-left: -4px; font-weight: 400; }
+.grid { flex: 1; min-height: 0; overflow-y: auto; padding: 4px 16px 24px; scrollbar-width: thin; scrollbar-color: rgba(255,255,255,.15) transparent; }
+.month { display: flex; align-items: baseline; gap: 8px; padding: 14px 0 8px; font-weight: 600; } .month .n { font: 10.5px "Space Mono"; color: var(--t2); font-weight: 400; }
+.tiles { display: grid; grid-template-columns: repeat(auto-fill, minmax(104px, 1fr)); gap: 8px; }
+.tile { aspect-ratio: 1; border-radius: 8px; display: grid; place-items: center; background: rgba(255,255,255,.025); }
+.tile .ph { border-radius: 5px; } .tile.sel { outline: 2px solid var(--accent); outline-offset: 1px; }
+.footer { height: 32px; flex: none; display: flex; align-items: center; gap: 8px; padding: 0 16px; border-top: 1px solid var(--hair); font-size: 12px; color: var(--t2); } .footer .n { font: 11.5px "Space Mono"; color: var(--t1); }
+
+/* ---------- Inspector ---------- */
+.insp { position: relative; border-left: 1px solid var(--hair); padding: var(--pad) var(--pad) 32px; overflow-y: auto; min-height: 0; scrollbar-width: none; }
+.insp::-webkit-scrollbar { display: none; }
+.fade { animation: in .28s ease both; } @keyframes in { from { opacity: 0; transform: translateY(6px); filter: blur(3px); } to { opacity: 1; transform: none; filter: none; } }
+@media (prefers-reduced-motion: reduce) { .fade { animation: none; } }
+.kicker { display: flex; align-items: center; gap: 8px; height: 22px; font-size: 10px; font-weight: 600; letter-spacing: .6px; text-transform: uppercase; color: var(--t2); }
+.kicker .lv { color: var(--accent-text); }
+.badge { height: 22px; padding: 0 8px; border-radius: 11px; display: inline-flex; align-items: center; gap: 6px; font-size: 11px; font-weight: 600; letter-spacing: 0; text-transform: none; white-space: nowrap; }
+.badge.gh { color: var(--ghost); border: 1px dashed rgba(242,184,97,.7); } .badge.mj { color: var(--mj); background: rgba(173,184,255,.15); } .badge.cam { color: var(--cam); background: rgba(124,207,227,.15); } .badge.off { color: var(--warn); background: rgba(245,115,97,.15); }
+.hero { display: flex; align-items: baseline; gap: 8px; margin-top: 6px; } .hero .d { font: 40px/44px "Space Mono"; letter-spacing: -1.5px; } .hero .u { color: var(--t2); } .hero .cm { margin: 0 -.15em; }
+.sub { font-size: 12px; color: var(--t2); margin-top: 2px; line-height: 1.45; } .sub .n { font: 11.5px "Space Mono"; color: var(--t1); }
+/* activity strip: images per month, neutral */
+.act { margin-top: 16px; } .act .bars { display: grid; grid-auto-flow: column; grid-auto-columns: 1fr; gap: 2px; height: 36px; align-items: end; border-bottom: 1px solid var(--rule); }
+.act .bars i { display: block; background: var(--bar); border-radius: 1.5px 1.5px 0 0; min-height: 2px; transform-origin: bottom; animation: grow .5s cubic-bezier(.2,.8,.2,1) both; } .act .bars i:hover { background: rgba(255,255,255,.8); }
+@keyframes grow { from { transform: scaleY(.05); } to { transform: none; } } @media (prefers-reduced-motion: reduce) { .act .bars i { animation: none; } }
+.act .ax { display: flex; justify-content: space-between; margin-top: 4px; font: 10.5px "Space Mono"; color: var(--t2); }
+/* sections */
+.sec { margin-top: 24px; }
+.cap { display: grid; grid-template-columns: 16px minmax(0,1fr) auto; column-gap: 8px; align-items: center; height: 22px; margin-bottom: 4px; font-size: 10px; font-weight: 600; letter-spacing: .6px; text-transform: uppercase; color: var(--t2); }
+.cap .gi { display: grid; place-items: center; } .cap .cg { height: 20px; padding: 0 7px; border-radius: 5px; font-size: 10px; font-weight: 600; letter-spacing: .3px; color: var(--t2); opacity: 0; display: inline-flex; align-items: center; gap: 5px; text-transform: none; }
+.sec:hover .cap .cg { opacity: 1; } .cap .cg:hover { background: rgba(255,255,255,.08); color: var(--t1); } .cap .cg.done { opacity: 1; color: var(--t1); }
+/* ONE grid for every bar table: label 1fr | bar 72 | count 56 */
+.bt .r { display: grid; grid-template-columns: minmax(0,1fr) var(--bar-w) var(--count-w); column-gap: var(--col-gap); align-items: center; height: 28px; border-bottom: 1px solid var(--rule); font-size: 12px; }
+.bt .r .l { display: flex; align-items: center; gap: 7px; min-width: 0; color: var(--t2); } .bt .r .l span { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.bt .r .l .sw { width: 6px; height: 6px; border-radius: 50%; flex: none; box-shadow: inset 0 0 0 1px currentColor; }
+.bt .r .b { height: 4px; border-radius: 2px; background: var(--track); overflow: hidden; } .bt .r .b i { display: block; height: 100%; min-width: 2px; background: var(--bar); border-radius: 2px; transition: width .35s cubic-bezier(.2,.8,.2,1); }
+.bt .r .c { font: 11.5px "Space Mono"; text-align: right; white-space: nowrap; }
+.bt .r:hover .l { color: var(--t1); } .bt .r:hover .b i { background: rgba(255,255,255,.75); }
+/* ONE grid for every value table: label 92 | value 1fr | copy 20 */
+.kv .r { display: grid; grid-template-columns: var(--kv-label) minmax(0,1fr) var(--kv-copy); column-gap: var(--kv-gap); align-items: center; min-height: 28px; margin: 0 -6px; padding: 0 6px; border-radius: 6px; font-size: 12px; }
+.kv .r:hover { background: rgba(255,255,255,.045); }
+.kv .r .l { color: var(--t2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; } .kv .r .v { min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; } .kv .r .v.m { font: 11.5px "Space Mono"; } .kv .r .v.dim { color: var(--t2); }
+.kv .r .v.wn { color: var(--warn); }
+.cp { width: 20px; height: 20px; border-radius: 5px; display: grid; place-items: center; color: var(--t2); opacity: 0; } .r:hover .cp, .cp.done { opacity: 1; } .cp:hover { background: rgba(255,255,255,.10); color: var(--t1); } .cp.done { color: var(--t1); }
+.more { height: 28px; display: flex; align-items: center; gap: 6px; font-size: 11px; color: var(--t2); } .more:hover { color: var(--t1); }
+/* preview */
+.pv { position: relative; height: 264px; display: grid; place-items: center; border-radius: 12px; overflow: hidden; background: rgba(255,255,255,.02); box-shadow: inset 0 0 0 1px var(--hair); }
+.pv .glow { position: absolute; inset: -20%; filter: blur(40px); opacity: .5; } .pv .ph { position: relative; max-width: calc(100% - 32px); max-height: calc(100% - 32px); border-radius: 6px; box-shadow: 0 10px 30px rgba(0,0,0,.5); }
+.idrow { display: grid; grid-template-columns: minmax(0,1fr) auto; column-gap: 8px; align-items: center; margin-top: 12px; } .idrow .nm { font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.meta { font-size: 11px; color: var(--t2); margin-top: 2px; } .meta .n { font: 10.5px "Space Mono"; }
+.prompt { font-size: 15px; line-height: 22px; color: var(--t1); user-select: text; -webkit-user-select: text; margin: 2px 0 12px; }
+.acts { display: flex; gap: 6px; flex-wrap: wrap; } .acts .btn { padding: 0 10px; } .acts.two { display: grid; grid-template-columns: 1fr 1fr; } .acts.two .btn { justify-content: center; } .acts.two .pri { grid-column: 1 / -1; }
+.btn { height: 28px; padding: 0 12px; border-radius: 7px; box-shadow: inset 0 0 0 1px var(--stroke); font-size: 12px; display: inline-flex; align-items: center; gap: 6px; white-space: nowrap; }
+.btn:hover { background: rgba(255,255,255,.07); } .btn.pri { background: var(--accent); box-shadow: none; color: #fff; font-weight: 500; } .btn.pri:hover { filter: brightness(1.1); } .btn[disabled] { opacity: .4; pointer-events: none; }
+.btn .k { font: 10.5px "Space Mono"; color: var(--t2); } .btn.amber { color: var(--ghost); box-shadow: inset 0 0 0 1px rgba(242,184,97,.5); }
+.chips { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 12px; } .chip { height: 22px; padding: 0 8px; border-radius: 6px; box-shadow: inset 0 0 0 1px var(--hair); background: var(--glass); font: 10.5px "Space Mono"; display: inline-flex; align-items: center; color: var(--t1); } .chip:hover { box-shadow: inset 0 0 0 1px var(--stroke); } .chip.done { color: var(--accent-text); }
+/* exposure read-out: four equal cells */
+.lcd { display: grid; grid-template-columns: repeat(4, 1fr); border-radius: 10px; box-shadow: inset 0 0 0 1px var(--hair); background: var(--glass); margin-bottom: 12px; }
+.lcd div { padding: 10px 0 9px; text-align: center; border-left: 1px solid var(--hair); } .lcd div:first-child { border-left: 0; } .lcd .v { font: 15px/20px "Space Mono"; } .lcd .k { font-size: 10px; font-weight: 600; letter-spacing: .6px; text-transform: uppercase; color: var(--t2); margin-top: 2px; }
+/* several selected */
+.multi { display: grid; grid-template-columns: 132px minmax(0,1fr); column-gap: 16px; align-items: center; height: 148px; }
+.stack { position: relative; width: 132px; height: 132px; } .stack i { position: absolute; left: 22px; top: 14px; width: 84px; height: 104px; border-radius: 6px; box-shadow: 0 8px 20px rgba(0,0,0,.5), 0 0 0 1px rgba(255,255,255,.08); transition: transform .3s cubic-bezier(.2,.8,.2,1); }
+.stack i:nth-child(1) { transform: rotate(-9deg) translate(-12px, 2px); } .stack i:nth-child(2) { transform: rotate(6deg) translate(12px, 0); } .stack i:nth-child(3) { transform: none; }
+.stack:hover i:nth-child(1) { transform: rotate(-16deg) translate(-22px, 4px); } .stack:hover i:nth-child(2) { transform: rotate(13deg) translate(22px, 2px); }
+@media (prefers-reduced-motion: reduce) { .stack i { transition: none; } }
+.status { display: grid; grid-template-columns: 16px minmax(0,1fr); column-gap: 8px; align-items: center; margin-top: 12px; font-size: 12px; color: var(--t2); } .status.wn { color: var(--warn); } .status .gi { display: grid; place-items: center; }
+.note { font-size: 11px; color: var(--t2); line-height: 1.45; margin-top: 10px; } .note.am { color: var(--ghost); }
+.filter { height: 28px; display: flex; align-items: center; gap: 6px; padding: 0 8px; border-radius: 7px; background: rgba(255,255,255,.06); color: var(--t2); margin: 2px 0 6px; } .filter input { flex: 1; min-width: 0; background: none; border: 0; outline: 0; font: inherit; font-size: 12px; color: var(--t1); user-select: text; -webkit-user-select: text; }
+.sublab { font-size: 11px; font-weight: 600; color: var(--t2); height: 26px; display: flex; align-items: flex-end; padding-bottom: 4px; }
+/* column guides (debug overlay, not app UI) */
+.guides { position: absolute; top: 0; bottom: 0; left: 0; right: 0; pointer-events: none; } .guides i { position: absolute; top: 0; bottom: 0; width: 1px; background: rgba(62,139,255,.55); } .guides i.k { background: rgba(124,207,227,.45); }
+.guides span { position: absolute; top: 2px; font: 9px "Space Mono"; color: var(--accent-text); transform: translateX(3px); white-space: nowrap; }
+</style>
+</head>
+<body>
+<div class="demo" id="demo"></div>
+<div class="window" id="win">
+  <main class="content" id="content"><header class="header" id="hd"></header><section class="grid" id="grid"></section><footer class="footer" id="ft"></footer></main>
+  <aside class="insp" id="insp"></aside>
+</div>
+<script>
+/* All names, numbers, prompt text and tiles are invented placeholders. */
+const I = {
+  photo: '<rect x="2.5" y="3" width="11" height="10" rx="1.5"/><path d="M2.5 10.5l3-3 2.5 2.5 2-2 3.5 3.5"/>',
+  spark: '<path d="M8 2.5l1.3 3.4 3.4 1.3-3.4 1.3L8 11.9 6.7 8.5 3.3 7.2l3.4-1.3z"/><path d="M12.5 11v2.5M11.2 12.2h2.6"/>',
+  info: '<circle cx="8" cy="8" r="5.5"/><path d="M8 7.3v3.5M8 5.2h.01"/>',
+  text: '<path d="M3 4.5h10M3 8h10M3 11.5h6"/>',
+  sliders: '<path d="M2.5 5h6M11.5 5h2M2.5 11h2M7.5 11h6"/><circle cx="10" cy="5" r="1.5"/><circle cx="6" cy="11" r="1.5"/>',
+  camera: '<path d="M2 6a1 1 0 0 1 1-1h1.8l1-1.5h4.4l1 1.5H13a1 1 0 0 1 1 1v5.5a1 1 0 0 1-1 1H3a1 1 0 0 1-1-1z"/><circle cx="8" cy="8.6" r="2.3"/>',
+  pin: '<path d="M8 14s4-3.9 4-7.2A4 4 0 0 0 4 6.800C4 10.100 8 14 8 14z"/><circle cx="8" cy="6.8" r="1.4"/>',
+  file: '<path d="M4 2.500h5l3 3v8H4z"/><path d="M9 2.500v3h3"/>',
+  list: '<path d="M5.500 4.500h8M5.500 8h8M5.500 11.500h8M2.700 4.500h.01M2.700 8h.01M2.700 11.500h.01"/>',
+  copy: '<rect x="5.500" y="5.500" width="8" height="8" rx="1.500"/><path d="M10.500 5.500V4a1.500 1.500 0 0 0-1.500-1.500H4A1.500 1.500 0 0 0 2.500 4v5A1.500 1.500 0 0 0 4 10.500h1.500"/>',
+  check: '<path d="M3.500 8.500l3 3 6-7"/>',
+  tray: '<path d="M2.500 9.500l1.800-5.500h7.400l1.800 5.500v3a1 1 0 0 1-1 1h-9a1 1 0 0 1-1-1z"/><path d="M2.500 9.500h3.200l.8 1.600h3l.8-1.600h3.200"/>',
+  compare: '<rect x="2" y="3" width="5" height="10" rx="1"/><rect x="9" y="3" width="5" height="10" rx="1"/>',
+  folder: '<path d="M2 4.500a1 1 0 0 1 1-1h3l1.500 1.500H13a1 1 0 0 1 1 1v6a1 1 0 0 1-1 1H3a1 1 0 0 1-1-1z"/>',
+  drive: '<rect x="2" y="9" width="12" height="4" rx="1"/><path d="M3.200 9l1.600-5.500h6.400L12.800 9"/><path d="M11.400 11h.01"/>',
+  offline: '<rect x="2" y="9" width="12" height="4" rx="1"/><path d="M3.200 9l1.600-5.500h6.400L12.800 9"/><path d="M2.500 2.500l11 11"/>',
+  ghost: '<path d="M3.500 13.500V7.500a4.500 4.500 0 0 1 9 0v6l-1.500-1.300-1.500 1.300-1.500-1.300-1.500 1.300-1.500-1.300z"/><path d="M6.400 7.600h.01M9.600 7.600h.01"/>',
+  shape: '<rect x="2.500" y="4" width="6" height="8.500" rx="1"/><rect x="10" y="6.500" width="3.500" height="3.500" rx=".8"/>',
+  chev: '<path d="M6 3.500l4.500 4.500L6 12.500"/>', search: '<circle cx="7" cy="7" r="4.200"/><path d="M10.200 10.200l3.300 3.300"/>',
+  search2: '<circle cx="7" cy="7" r="4.200"/><path d="M10.200 10.200l3.300 3.300"/>',
+};
+const ic = (n, s = 14, col) => `<svg class="i" width="${s}" height="${s}" viewBox="0 0 16 16" fill="none" stroke="${col || 'currentColor'}" stroke-width="1.300" stroke-linecap="round" stroke-linejoin="round">${I[n]}</svg>`;
+const fmt = n => Math.round(n).toLocaleString('en-US');
+const esc = s => String(s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+const $ = s => document.querySelector(s);
+const S = { ctx: 'library', sel: new Set(), stress: false, guides: false, width: 352, all: false, filter: '', more: new Set() };
+
+/* placeholder tiles */
+function rng(seed) { let h = seed; return () => { h += 0x6D2B79F5; let t = h; t = Math.imul(t ^ (t >>> 15), t | 1); t ^= t + Math.imul(t ^ (t >>> 7), t | 61); return ((t ^ (t >>> 14)) >>> 0) / 4294967296; }; }
+const R = rng(42), TILES = [];
+for (let i = 0; i < 54; i++) { const photo = R() < .28; TILES.push({ id: i, photo, ar: photo ? [1.5, 1.5, .66][Math.floor(R() * 3)] : [.66, .66, 1, 1.78, .8][Math.floor(R() * 5)], h: Math.floor(photo ? 185 + R() * 30 : 215 + R() * 45), s: Math.floor(5 + R() * 10), l: Math.floor(16 + R() * 15) }); }
+const ph = (t, extra = 0) => `background:linear-gradient(160deg,hsl(${t.h} ${t.s + extra}% ${t.l + 8}%),hsl(${t.h + 20} ${t.s + extra}% ${t.l - 4}%));`;
+
+/* ---------- building blocks ---------- */
+const K = n => S.stress ? stress(n) : n;
+function stress(n) { return n > 3000 ? n * 41 + 7 : n > 500 ? n * 9 : n; } // long and short numbers side by side
+function cap(title, icon, tint, group) { return `<div class="cap"><span class="gi">${ic(icon, 14, tint)}</span><span>${title}</span>${group ? `<button class="cg" data-copy="group" title="Copy this group">${ic('copy', 11)}<span>Copy group</span></button>` : '<span></span>'}</div>`; }
+function barTable(title, icon, rows, tint) {
+  const max = Math.max(...rows.map(r => K(r[1])), 1); // a source tint is a small ring after the name, so every label starts on the same left edge
+  return `<div class="sec bt">${cap(title, icon, tint)}${rows.map(r => `<div class="r"><span class="l"><span>${esc(r[0])}</span>${r[2] ? `<i class="sw" style="color:${r[2]}"></i>` : ''}</span><span class="b"><i style="width:${Math.max(3, K(r[1]) / max * 100)}%"></i></span><span class="c">${fmt(K(r[1]))}</span></div>`).join('')}</div>`;
+}
+function kvRows(rows) { return rows.map(r => `<div class="r" title="${esc(r[1])}"><span class="l">${esc(r[0])}</span><span class="v ${r[2] || ''}">${esc(r[1])}</span><button class="cp" data-copy="row" title="Copy ${esc(r[0])}">${ic('copy', 12)}</button></div>`).join(''); }
+function kvTable(title, icon, rows, tint, key, short) {
+  const open = S.more.has(key), shown = short && !open ? rows.slice(0, short) : rows;
+  return `<div class="sec kv">${cap(title, icon, tint, true)}${kvRows(shown)}${short && rows.length > short ? `<button class="more" data-act="more" data-id="${key}">${ic('chev', 9)}${open ? 'Show fewer' : `${rows.length - short} more`}</button>` : ''}</div>`;
+}
+function activity(seed, from, to) {
+  const r = rng(seed), n = 32; let v = .2; const bars = []; for (let i = 0; i < n; i++) { v = Math.max(.05, Math.min(1, v + (r() - .42) * .35)); bars.push(v); }
+  return `<div class="act" title="Images per month"><div class="bars">${bars.map((b, i) => `<i style="height:${Math.round(b * 100)}%;animation-delay:${i * 8}ms" title="${fmt(K(b * 1400))} images"></i>`).join('')}</div><div class="ax"><span>${from}</span><span>${to}</span></div></div>`;
+}
+const sep = s => s.replace(/,/g, '<span class="cm">,</span>'); // the mono comma takes a full cell: pull it in, as the design system says
+const hero = (n, unit) => `<div class="hero"><span class="d" data-count="${n}">${sep(fmt(n))}</span><span class="u">${unit}</span></div>`;
+
+/* ---------- states ---------- */
+const CTX = {
+  library: { kicker: 'Library', title: 'Main Archive', line: '<b>Library</b> · 3 folders on 2 disks, shown together', n: 23196 },
+  search: { kicker: 'Saved search · <span class="lv">live</span>', title: 'Portraits, v8', line: '<b>Saved search</b> · <span class="lv">live</span> · in Main Archive', n: 1208 },
+  folder: { kicker: 'Folder', title: 'Round 2', line: '<b>Folder</b> · Main Archive › Renders · on Disk B', n: 1104 },
+  folderoff: { kicker: 'Folder', title: 'Round 2', line: '<b>Folder</b> · Main Archive › Renders · <span class="wn">offline, shown from the index</span>', n: 1104 },
+  ghost: { kicker: '', title: 'Scans to check', line: '<b class="am">Ghost · temporary</b> · deleted when closed', n: 312 },
+};
+function summary() {
+  const c = CTX[S.ctx], n = K(c.n), folder = S.ctx.startsWith('folder'), off = S.ctx === 'folderoff'; let h = '';
+  h += `<div class="kicker">${S.ctx === 'ghost' ? `<span class="badge gh">${ic('ghost', 13)}Ghost · temporary</span>` : c.kicker}</div>${hero(n, 'images')}`;
+  if (S.ctx === 'library') h += `<div class="sub">in <span class="n">3</span> folders on <span class="n">2</span> disks · <span class="n">${fmt(n * .71)}</span> with a prompt</div>`;
+  if (S.ctx === 'search') h += `<div class="sub">matching right now · fills itself as images arrive</div><div class="chips"><span class="chip" data-copy="chip">Source: Midjourney</span><span class="chip" data-copy="chip">Version: v8</span><span class="chip" data-copy="chip">Shape: Portrait</span></div>`;
+  if (S.ctx === 'ghost') h += `<div class="sub">Deleted when closed. Your files are never changed.</div>`;
+  if (folder) h += `<div class="sub"><span class="n">${fmt(n - 516)}</span> directly here · <span class="n">516</span> in <span class="n">2</span> subfolders</div>
+    <div class="status ${off ? 'wn' : ''}"><span class="gi">${ic(off ? 'offline' : 'drive', 14)}</span><span>${off ? 'Disk B is offline · shown from the index' : 'Disk B · connected'}</span></div>`;
+  h += activity(S.ctx.length * 7 + 3, folder ? 'Mar 2026' : '2019', folder ? 'Nov 2026' : '2026');
+  if (folder) h += barTable('Subfolders', 'folder', [['Finals', 96], ['Rejected', 420]]);
+  h += barTable('Types', 'photo', S.ctx === 'ghost' ? [['PDF scan', 204], ['JPEG', 96], ['PNG', 12]] : [['PNG', c.n * .74], ['JPEG', c.n * .22], ['WebP', c.n * .035], ['HEIC', c.n * .005]]);
+  if (S.ctx !== 'ghost') h += barTable('Sources', 'spark', S.ctx === 'search' ? [['Midjourney', c.n, 'var(--mj)']] : [['Midjourney', c.n * .58, 'var(--mj)'], ['Camera', c.n * .2, 'var(--cam)'], ['Stable Diffusion', c.n * .14, 'var(--sd)'], ['Screenshot', c.n * .08]]);
+  const det = [['Size', (n * 0.0021).toFixed(1) + ' GB', 'm'], ['Dates', folder ? '3 Mar – 14 Nov 2026' : '12 Feb 2019 – 14 Nov 2026', 'm']];
+  if (folder) det.push(['Disk', off ? 'Disk B · offline' : 'Disk B · connected', off ? 'wn' : ''], ['Path', '/Volumes/Disk B/Renders/Round 2', 'm'], ['Last scanned', off ? '2 Nov 2026, 18:40' : 'Today, 09:12', 'm']);
+  else if (S.ctx === 'ghost') det.push(['Folder', '/Volumes/Disk C/Inbox', 'm'], ['Kept', 'Nothing', '']);
+  else det.push(['With prompt', fmt(n * .71), 'm'], ['Added', '16 Nov 2026', 'm'], ['Folders', '3 on 2 disks', '']);
+  h += kvTable('Details', 'info', det, '', 'det');
+  if (folder) h += `<div class="sec acts"><button class="btn" ${off ? 'disabled' : ''}>Rescan</button><button class="btn" ${off ? 'disabled' : ''}>Show in Finder</button></div>${off ? `<div class="note">Thumbnails and metadata come from the index on this Mac. Originals and rescans wait for the disk.</div>` : ''}`;
+  if (S.ctx === 'ghost') h += `<div class="sec acts"><button class="btn amber">Close Ghost</button></div><div class="note am">No index, thumbnails or history are kept after it is closed.</div>`;
+  return h;
+}
+const PROMPT = 'A quiet harbour at dawn, soft fog over still water, small wooden boats moored in a row, muted palette, 35 mm film look';
+const PARAMS = ['--ar 2:3', '--s 250', '--c 10', '--v 8'];
+function allMeta(t) {
+  const groups = t.photo ? [['EXIF', [['ExposureTime', '1/250'], ['FNumber', '2.8'], ['ISOSpeedRatings', '400'], ['FocalLength', '33.0'], ['FocalLenIn35mmFilm', '50'], ['ExposureBiasValue', '-0.33'], ['MeteringMode', 'Pattern'], ['WhiteBalance', 'Auto'], ['Flash', 'Off, did not fire'], ['SceneCaptureType', 'Standard'], ['SubSecTimeOriginal', '42'], ['ColorSpace', 'sRGB']]], ['TIFF', [['Make', 'Example Camera Co.'], ['Model', 'XT-500'], ['Orientation', '1'], ['XResolution', '300'], ['Software', 'Firmware 2.10']]], ['GPS', [['Latitude', '59.9139 N'], ['Longitude', '10.7522 E'], ['Altitude', '12.4 m'], ['ImgDirection', '214.0']]], ['Maker notes', [['FilmMode', 'Standard'], ['DynamicRange', '100'], ['ShutterType', 'Mechanical']]]]
+    : [['PNG chunks', [['IHDR', '1024 × 1536, 8-bit RGB'], ['tEXt Description', PROMPT.slice(0, 40) + '…'], ['tEXt Author', 'example_user'], ['iCCP', 'sRGB IEC61966-2.1'], ['pHYs', '2835 × 2835 px/m']]], ['XMP', [['DigitalSourceType', 'trainedAlgorithmicMedia'], ['GUID', '5b1e0c7a-2f4d-4a51-9c3e-1d2a7e6f9b10']]], ['File', [['Inode', '48219731'], ['Permissions', 'rw-r--r--'], ['Owner', 'staff']]]];
+  const f = S.filter.toLowerCase(); let total = 0, h = '';
+  for (const [g, rows] of groups) { const rs = rows.filter(r => !f || (r[0] + r[1]).toLowerCase().includes(f)); total += rs.length; if (rs.length) h += `<div class="sublab">${g}</div>` + kvRows(rs.map(r => [r[0], r[1], 'm'])); }
+  return { h: h || `<div class="note">No field matches.</div>`, count: groups.reduce((a, g) => a + g[1].length, 0) };
+}
+function one(t) {
+  let h = `<div class="pv"><div class="glow" style="background:radial-gradient(closest-side, hsl(${t.h} ${t.s + 30}% ${t.l + 22}%), transparent)"></div><div class="ph" style="aspect-ratio:${t.ar};height:${t.ar >= 1 ? 'auto' : '232px'};width:${t.ar >= 1 ? '288px' : 'auto'};${ph(t, 6)}"></div></div>`;
+  const name = t.photo ? `photo-${2200 + t.id}.jpg` : `render-${String(400 + t.id).padStart(4, '0')}.png`, dim = t.photo ? (t.ar > 1 ? '6240 × 4160' : '4160 × 6240') : (t.ar < .7 ? '1024 × 1536' : t.ar > 1.5 ? '1456 × 816' : '1024 × 1024');
+  h += `<div class="idrow"><span class="nm" title="${name}">${name}</span>${t.photo ? `<span class="badge cam">${ic('camera', 12)}Camera</span>` : `<span class="badge mj">${ic('spark', 12)}Midjourney v8</span>`}</div><div class="meta"><span class="n">${dim}</span> · <span class="n">${t.photo ? '14.2 MB' : '2.4 MB'}</span> · <span class="n">14 Nov 2026, 09:41</span></div>`;
+  if (!t.photo) {
+    h += `<div class="sec">${cap('Prompt', 'text', 'var(--mj)')}<div class="prompt">${PROMPT}</div><div class="acts"><button class="btn pri" data-copy="btn" data-label="Copy Prompt">Copy Prompt</button><button class="btn" data-copy="btn" data-label="Copy Text">Copy Text</button><button class="btn" data-copy="btn" data-label="Copy Parameters">Copy Parameters</button></div><div class="chips">${PARAMS.map(p => `<span class="chip" data-copy="chip" title="Copy">${p}</span>`).join('')}</div></div>`;
+    h += kvTable('Generator', 'sliders', [['Model', 'Midjourney', ''], ['Version', '8', 'm'], ['Aspect', '2:3', 'm'], ['Stylize', '250', 'm'], ['Chaos', '10', 'm'], ['Seed', '4821973', 'm'], ['Job ID', '5b1e0c7a-2f4d-4a51-9c3e-1d2a7e6f9b10', 'm'], ['Author', 'example_user', '']], 'var(--mj)', 'gen', 5);
+  } else {
+    h += `<div class="sec">${cap('Exposure', 'camera', 'var(--cam)', true)}<div class="lcd" title="Click a value to copy it">${[['f/2.8', 'Aperture'], ['1/250', 'Shutter'], ['400', 'ISO'], ['33 mm', 'Focal']].map(c => `<div data-copy="lcd"><div class="v">${c[0]}</div><div class="k">${c[1]}</div></div>`).join('')}</div><div class="acts"><button class="btn pri" data-copy="btn" data-label="Copy Exposure">Copy Exposure</button><button class="btn" data-copy="btn" data-label="Copy All">Copy All</button></div></div>`;
+    h += kvTable('Camera and lens', 'camera', [['Camera', 'XT-500', ''], ['Lens', '33 mm f/1.4', 'm'], ['Focal length', '33 mm (50 mm eq.)', 'm'], ['Compensation', '−0.3 EV', 'm'], ['Program', 'Aperture priority', ''], ['Metering', 'Pattern', ''], ['White balance', 'Auto', ''], ['Flash', 'Off', '']], 'var(--cam)', 'cam', 4);
+    h += kvTable('Location', 'pin', [['Latitude', '59.9139° N', 'm'], ['Longitude', '10.7522° E', 'm'], ['Altitude', '12.4 m', 'm'], ['Direction', '214° SW', 'm']], 'var(--loc)', 'loc');
+  }
+  h += kvTable('File', 'file', [['Name', name, ''], ['Kind', t.photo ? 'JPEG image' : 'PNG image', ''], ['Size', t.photo ? '14.2 MB' : '2.4 MB', 'm'], ['Dimensions', dim, 'm'], ['Colour profile', 'sRGB IEC61966-2.1', ''], ['Created', '14 Nov 2026, 09:41', 'm'], ['Modified', '14 Nov 2026, 09:41', 'm'], ['Folder', 'Renders › Round 2', '']], '', 'file', 4);
+  const a = allMeta(t);
+  h += `<div class="sec kv">${cap('All metadata', 'list', '', true)}<button class="more" data-act="all" style="height:28px">${ic('chev', 9)}${S.all ? 'Hide' : `Show all <span class="mono" style="margin:0 2px">${a.count + 60}</span> fields`}</button>${S.all ? `<div class="filter">${ic('search', 13)}<input id="mf" placeholder="Filter fields" value="${esc(S.filter)}"></div><div id="allrows">${a.h}</div>` : ''}</div>`;
+  return h;
+}
+function several(ts) {
+  const n = ts.length, gen = ts.filter(t => !t.photo).length, pho = n - gen, top = ts.slice(0, 3).reverse(); while (top.length < 3) top.unshift(top[0]);
+  let h = `<div class="multi"><div class="stack" title="${n} images">${top.map(t => `<i style="${ph(t, 6)}"></i>`).join('')}</div><div><div class="kicker">Selection</div>${hero(n, 'images')}<div class="sub">${gen ? `<span class="n">${gen}</span> generated` : ''}${gen && pho ? ' · ' : ''}${pho ? `<span class="n">${pho}</span> photo${pho > 1 ? 's' : ''}` : ''}</div></div></div>`;
+  h += `<div class="acts two" style="margin-top:16px"><button class="btn pri" data-copy="btn" data-label="Copy ${gen} Prompt${gen === 1 ? '' : 's'}" ${gen ? '' : 'disabled'}>Copy ${gen} Prompt${gen === 1 ? '' : 's'}</button><button class="btn" data-copy="btn" data-done="Added" data-label="Add ${n} to Tray">${ic('tray', 13)}Add ${n} to Tray <span class="k">T</span></button><button class="btn">${ic('compare', 13)}Compare ${n}</button></div>${pho && gen ? `<div class="note"><span class="mono">${pho}</span> of <span class="mono">${n}</span> have no prompt and are skipped by Copy Prompts.</div>` : ''}`;
+  const mixed = k => [k, 'Mixed', 'dim'];
+  h += kvTable('In common', 'info', [pho && gen ? ['Source', '2 sources', 'dim'] : ['Source', gen ? 'Midjourney' : 'Camera', ''], gen && !pho ? ['Version', '8', 'm'] : mixed('Version'), ['Folder', 'Renders › Round 2', ''], ['Dates', '3 – 14 Nov 2026', 'm'], ['Total size', (gen * 2.4 + pho * 14.2).toFixed(1) + ' MB', 'm'], mixed('Dimensions')], '', 'common');
+  const sh = { Portrait: 0, Landscape: 0, Square: 0 }; ts.forEach(t => sh[t.ar < .95 ? 'Portrait' : t.ar > 1.05 ? 'Landscape' : 'Square']++);
+  h += barTable('Shapes', 'shape', Object.entries(sh).filter(e => e[1]).sort((a, b) => b[1] - a[1]));
+  h += barTable('Sources', 'spark', [['Midjourney', gen, 'var(--mj)'], ['Camera', pho, 'var(--cam)']].filter(r => r[1]));
+  return h;
+}
+
+/* ---------- render ---------- */
+function renderInspector(animate = true) {
+  const ts = [...S.sel].map(i => TILES[i]), el = $('#insp'), st = el.scrollTop;
+  let h = `<div class="${animate ? 'fade' : ''}">` + (ts.length === 0 ? summary() : ts.length === 1 ? one(ts[0]) : several(ts)) + `</div>`;
+  if (S.guides) { const w = S.width, p = 16, cw = 56, bw = 72, g = 12, kl = 92; const xs = [[p, ''], [w - p, ''], [w - p - cw, 'count 56'], [w - p - cw - g, ''], [w - p - cw - g - bw, 'bar 72'], [p + kl, 'k'], [p + kl + 6, 'k'], [w - p - 20, 'k']];
+    h += `<div class="guides" style="height:${Math.max(el.scrollHeight, 2400)}px">${xs.map(x => `<i class="${x[1] === 'k' ? 'k' : ''}" style="left:${x[0]}px"></i>${x[1] && x[1] !== 'k' ? `<span style="left:${x[0]}px">${x[1]}</span>` : ''}`).join('')}</div>`; }
+  el.innerHTML = h; el.scrollTop = animate ? 0 : st;
+  if (animate && !matchMedia('(prefers-reduced-motion: reduce)').matches) el.querySelectorAll('[data-count]').forEach(countUp);
+}
+function countUp(el) { const to = +el.dataset.count, from = Math.round(to * .9), t0 = performance.now(); const step = t => { const k = Math.min(1, (t - t0) / 380), e = 1 - Math.pow(1 - k, 3); el.innerHTML = sep(fmt(from + (to - from) * e)); if (k < 1) requestAnimationFrame(step); }; requestAnimationFrame(step); }
+function renderMain() {
+  const c = CTX[S.ctx]; $('#content').classList.toggle('ghost', S.ctx === 'ghost');
+  $('#hd').innerHTML = `<div class="ttl"><div class="scopeline">${c.line}</div><div class="title">${c.title}<span class="n">${fmt(K(c.n))}</span><span class="u">images</span></div></div>`;
+  const ms = [['November 2026', 0, 20], ['October 2026', 20, 38], ['September 2026', 38, 54]];
+  $('#grid').innerHTML = ms.map(m => `<div class="month">${m[0]}<span class="n">${fmt(K(c.n * (m[2] - m[1]) / 300))}</span></div><div class="tiles">${TILES.slice(m[1], m[2]).map(t => `<div class="tile ${S.sel.has(t.id) ? 'sel' : ''}" data-tile="${t.id}"><div class="ph" style="width:${t.ar >= 1 ? 100 : Math.round(t.ar * 100)}%;height:${t.ar >= 1 ? Math.round(100 / t.ar) : 100}%;${ph(t)}"></div></div>`).join('')}</div>`).join('');
+  $('#ft').innerHTML = S.sel.size ? `<span><span class="n">${S.sel.size}</span> selected · Esc clears</span>` : `<span><span class="n">${fmt(K(c.n))}</span> indexed · click an image, ⌘-click for more</span>`;
+}
+function renderDemo() {
+  const b = (k, v, label, on) => `<button data-set="${k}" data-v="${v}" class="${on ? 'on' : ''}">${label}</button>`, n = S.sel.size, t1 = n === 1 ? TILES[[...S.sel][0]] : null;
+  $('#demo').innerHTML = `<b>Selection</b>${b('sel', 'none', 'Nothing', n === 0)}${b('sel', 'gen', 'One generated', t1 && !t1.photo)}${b('sel', 'photo', 'One photo', t1 && t1.photo)}${b('sel', 'many', 'Several (12)', n > 1)}
+    <b class="lbl">Showing</b>${b('ctx', 'library', 'Library', S.ctx === 'library')}${b('ctx', 'search', 'Saved search', S.ctx === 'search')}${b('ctx', 'folder', 'Folder', S.ctx === 'folder')}${b('ctx', 'folderoff', 'Folder offline', S.ctx === 'folderoff')}${b('ctx', 'ghost', 'Ghost', S.ctx === 'ghost')}
+    <b class="lbl">Checks</b>${b('stress', '', 'Long numbers', S.stress)}${b('guides', '', 'Column guides', S.guides)}${[300, 352, 440].map(w => b('width', w, w, S.width === w)).join('')}<a class="lbl" href="index.html">← Organization mockup</a>
+    <span class="tok">bars: label 1fr | bar 72 | count 56, gap 12 · values: label 92 | value 1fr | copy 20, gap 6 · padding 16</span>`;
+}
+function render(animate = true) { document.documentElement.style.setProperty('--iw', S.width + 'px'); renderMain(); renderInspector(animate); renderDemo(); }
+
+/* ---------- events ---------- */
+function flash(el, kind) {
+  if (kind === 'btn') { const label = el.dataset.label; el.innerHTML = ic('check', 13) + (el.dataset.done || 'Copied'); setTimeout(() => { if (el.isConnected) renderInspector(false); }, 1200); return; }
+  if (kind === 'chip' || kind === 'lcd') { el.classList.add('done'); const old = el.innerHTML; if (kind === 'chip') el.innerHTML = 'Copied'; else el.querySelector('.k').textContent = 'Copied'; setTimeout(() => { if (el.isConnected) { el.innerHTML = old; el.classList.remove('done'); } }, 1000); return; }
+  el.classList.add('done'); const old = el.innerHTML; el.innerHTML = ic('check', 12) + (kind === 'group' ? '<span>Copied</span>' : ''); setTimeout(() => { if (el.isConnected) { el.innerHTML = old; el.classList.remove('done'); } }, 1100);
+}
+document.addEventListener('click', e => {
+  const set = e.target.closest('[data-set]');
+  if (set) { const k = set.dataset.set, v = set.dataset.v;
+    if (k === 'sel') { S.sel.clear(); S.all = false; S.filter = ''; if (v === 'gen') S.sel.add(TILES.find(t => !t.photo && t.ar < .7).id); if (v === 'photo') S.sel.add(TILES.find(t => t.photo && t.ar > 1).id); if (v === 'many') { TILES.filter(t => !t.photo).slice(0, 9).forEach(t => S.sel.add(t.id)); TILES.filter(t => t.photo).slice(0, 3).forEach(t => S.sel.add(t.id)); } return render(); }
+    if (k === 'ctx') { S.ctx = v; S.sel.clear(); return render(); }
+    if (k === 'stress') { S.stress = !S.stress; return render(false); } if (k === 'guides') { S.guides = !S.guides; return render(false); } if (k === 'width') { S.width = +v; return render(false); } }
+  const cp = e.target.closest('[data-copy]'); if (cp) return flash(cp, cp.dataset.copy);
+  const act = e.target.closest('[data-act]'); if (act) { if (act.dataset.act === 'more') { const id = act.dataset.id; S.more.has(id) ? S.more.delete(id) : S.more.add(id); } if (act.dataset.act === 'all') S.all = !S.all; return renderInspector(false); }
+  const tile = e.target.closest('[data-tile]');
+  if (tile) { const id = +tile.dataset.tile; if (e.metaKey || e.shiftKey || e.ctrlKey) { S.sel.has(id) ? S.sel.delete(id) : S.sel.add(id); } else { const only = S.sel.size === 1 && S.sel.has(id); S.sel.clear(); if (!only) S.sel.add(id); } S.all = false; S.filter = ''; return render(); }
+  if (e.target.closest('#grid') && S.sel.size) { S.sel.clear(); render(); }
+});
+document.addEventListener('input', e => { if (e.target.id === 'mf') { S.filter = e.target.value; $('#allrows').innerHTML = allMeta(TILES[[...S.sel][0]]).h; } });
+document.addEventListener('keydown', e => { if (e.target.tagName === 'INPUT') return; if (e.key === 'Escape' && S.sel.size) { S.sel.clear(); render(); } });
+render();
+</script>
+</body>
+</html>

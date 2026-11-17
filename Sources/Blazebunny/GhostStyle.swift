@@ -72,8 +72,12 @@ struct GhostBadge: View {
 
 extension View {
     /// Dashed outline in the ghost tint, drawn inside the view's bounds.
+    /// When active the content is also padded inside the outline (more at the top, where the
+    /// title sits) so nothing touches the dashes.
     func ghostOutline(_ active: Bool, radius: CGFloat = 12, inset: CGFloat = 3) -> some View {
-        overlay {
+        padding(active ? EdgeInsets(top: DS.Space.m + 2, leading: DS.Space.s, bottom: DS.Space.s, trailing: DS.Space.s)
+                       : EdgeInsets())
+        .overlay {
             if active {
                 RoundedRectangle(cornerRadius: radius, style: .continuous)
                     .strokeBorder(DS.Tint.ghost.opacity(0.55), style: StrokeStyle(lineWidth: 1.5, dash: [7, 5]))

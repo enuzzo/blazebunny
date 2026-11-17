@@ -83,17 +83,22 @@ public struct SearchQuery: Codable, Hashable, Sendable {
     public var text: String = ""
     public var filter = FilterState()
     public var sort: ItemSort = .newestFirst
-    public init(text: String = "", filter: FilterState = FilterState(), sort: ItemSort = .newestFirst) {
+    /// Limits the query to one folder (relative path, "/"-separated) and everything below it.
+    /// A path, not an id, so it survives a rebuilt folder table.
+    public var folder: String?
+    public init(text: String = "", filter: FilterState = FilterState(), sort: ItemSort = .newestFirst, folder: String? = nil) {
         self.text = text
         self.filter = filter
         self.sort = sort
+        self.folder = folder
     }
-    enum CodingKeys: String, CodingKey { case text, filter, sort }
+    enum CodingKeys: String, CodingKey { case text, filter, sort, folder }
     public init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         text = (try? c.decode(String.self, forKey: .text)) ?? ""
         filter = (try? c.decode(FilterState.self, forKey: .filter)) ?? FilterState()
         sort = (try? c.decode(ItemSort.self, forKey: .sort)) ?? .newestFirst
+        folder = try? c.decode(String.self, forKey: .folder)
     }
 }
 

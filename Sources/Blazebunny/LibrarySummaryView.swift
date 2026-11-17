@@ -47,12 +47,16 @@ struct LibrarySummaryView: View {
         }
     }
 
-    /// A number with its group separators pulled in.
+    /// A number with its group separators pulled in. The mono gives a separator a whole
+    /// character cell; the squeeze is split before and after it so the dot stays centred
+    /// in the narrower gap instead of touching the next digit.
     static func tightened(_ number: String, kern: CGFloat) -> AttributedString {
+        let chars = Array(number)
         var out = AttributedString()
-        for ch in number {
+        for (i, ch) in chars.enumerated() {
             var piece = AttributedString(String(ch))
-            if !ch.isNumber { piece.kern = kern }
+            let nextIsSeparator = i + 1 < chars.count && !chars[i + 1].isNumber
+            if !ch.isNumber || nextIsSeparator { piece.kern = kern / 2 }
             out += piece
         }
         return out
@@ -61,6 +65,10 @@ struct LibrarySummaryView: View {
     func breakdown(_ title: String, _ values: [FacetValue], label: @escaping (String) -> String) -> some View {
         let top = values.prefix(6)
         let maxCount = max(1, top.map(\.count).max() ?? 1)
+        // One fixed width for every count in the table, sized for the longest one, so each bar
+        // starts and ends at the same x whatever its own number looks like.
+        let digits = top.map { $0.count.formatted().count }.max() ?? 1
+        let countWidth = CGFloat(digits) * DS.Size.monoDigitWidth
         return InfoTable(title: title) {
             ForEach(Array(top), id: \.value) { v in
                 HStack(alignment: .firstTextBaseline, spacing: DS.Space.s) {
@@ -76,7 +84,7 @@ struct LibrarySummaryView: View {
                     .alignmentGuide(.firstTextBaseline) { $0[.bottom] + 3 }
                     Text(v.count.formatted())
                         .dsText(.label, .number)
-                        .frame(minWidth: 52, alignment: .trailing)
+                        .frame(width: countWidth, alignment: .trailing)
                 }
                 .dsText(.label)
                 .frame(minHeight: DS.Size.control)

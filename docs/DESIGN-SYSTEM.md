@@ -69,6 +69,16 @@ Rules: one accent at a time; a source tint appears only where that source is nam
 exception (the connected-drive icon is neutral, the offline one is coral); a group label that is not a
 control is secondary and only its icon carries the tint, so it never reads as an active filter.
 
+## Tables and bars: one grid
+
+Every table sits on one clean column grid, so rows compare at a glance. For a table with bars
+(Types, Sources): label (flexible) | bar (constant width, `DS.Size.dataBar`) | count (right-aligned
+mono in ONE fixed width for the whole table, sized for its longest number:
+`digits * DS.Size.monoDigitWidth`). Bars therefore start and end at the same x in every row whatever
+the number looks like; a count with more digits must never push its bar. The same applies to the
+label | value columns of the inspector: one label column width (`DS.Size.inspectorLabel`), values
+left-aligned on the same x.
+
 ## Spacing, size and shape
 
 - 4 pt base grid, 8 pt for layout (`DS.Space`: 4, 8, 12, 16, 24; `iconGap` 6 between a small icon and its
@@ -81,14 +91,54 @@ control is secondary and only its icon carries the tint, so it never reads as an
 
 ## Sidebar
 
-- Section titles all use one quiet style (`SidebarHeader`: `metaStrong`, secondary colour); only
-  the Ghosts title gets the amber tint and icon. A section title must say what the section *is*
+- Section titles all use one style (`SidebarHeader`: `headline`, 13 pt semibold, secondary colour): the
+  same size as the rows below, set apart by weight and colour only (owner, 2026-11-17: a title smaller
+  than its content looked wrong). Only the Ghosts title gets the amber tint and icon. A section title must say what the section *is*
   ("Libraries", "Views", "Saved Searches"), never repeat a name that is already on screen (the
   library name above the views was removed: it added nothing).
-- Rows use a fixed 20 pt icon column and a 10 pt gap (`DS.Space.iconText`) before the text, so
-  text lines up across rows and icons do not crowd it. Icon colour stays quieter than the text.
+- Rows are 28 pt (`DS.Size.sidebarRow`) with a fixed 20 pt icon column and a 10 pt gap (`DS.Space.iconText`)
+  before the text. Rows sit flush with the section title's left edge (no extra inset); only the Folders
+  section keeps a 14 pt chevron column in front of the icon (so folders with and without subfolders line
+  up) and indents 14 pt per level (`DS.Size.sidebarIndent`). Counts are the mono, secondary, right-aligned.
+- Folders (stage 1): the tree mirrors the disk, siblings sorted with `localizedStandardCompare`, counts are
+  the number of images in the folder *and everything below it*. A folder with no image anywhere below it is
+  hidden (a folder of documents or an empty one is noise in an image browser; the Core tree still has them).
+  Which folders are open is remembered per library (`expandedFolders` in UserDefaults), never for a ghost.
+- Context line above the title (`ContextLine`, 11 pt): `Folder · library › parent`, `Saved search · live · in
+  library › folder`, `View · in library`, `Library · everything, subfolders included`; the parts that lead
+  somewhere are clickable. Kind in `metaStrong`, the rest `meta`, all secondary (ghost: amber kind).
 - Primary things (libraries) and secondary things (views, saved searches) share the 13 pt body
   size; hierarchy comes from the section titles and spacing, not from many sizes.
+
+## Sidebar: alive, not dull
+
+Owner's note (2026-11-17): the sidebar is too muted; it should feel lively and pleasant, like Claude's own
+session sidebar, without becoming a rainbow. Direction:
+- **A soft coloured glow** behind the sidebar (cool blue to violet at low opacity, a little stronger than
+  the main window's backdrop), so the glass has something to refract. Reduce Transparency removes it.
+- **Colour in small, matched doses, on icons and dots only:** each kind of thing gets one tint of equal
+  lightness (library, folder, saved search, collection, tray; ghost stays amber, offline coral). Text stays
+  neutral; selection stays the system accent but as a clearly tinted fill with a thin leading marker rather
+  than a flat grey. The palette is the existing matched-lightness tints (indigo #ADB8FF, green #8ED6A0, teal
+  #7CCFE3, amber #F2B861, coral #F57361) plus at most two new ones chosen the same way; every pair keeps 3:1
+  against the glass and never carries meaning by colour alone.
+- **Rhythm and weight:** 28 pt rows, 20 pt icon column, 10 pt icon gap, section titles semibold 11 pt; row text
+  at primary colour (not dimmed), counts in the mono and secondary. Hover and press feedback visible.
+- **Small delight:** a short spring on expand/collapse and on drag targets; respects Reduce Motion.
+- Still one accent at a time per region, and no glass over the image grid.
+
+### Sidebar as built (stage 1)
+
+- Tints (icon only, text stays neutral): library `Tint.library` violet #C2A8FF (the one new tint), folders
+  `Tint.folder` #8ED6A0, Generated and Photos their source tints, other views secondary; saved searches keep
+  their user-chosen colour dot. Pink is reserved for collections (stage 4).
+- Selection: accent at 30% (`Tint.selection`) with a 3 x 14 pt accent marker at the leading edge; the
+  system's grey selection is switched off (`SidebarTableTweaks`, `selectionHighlightStyle = .none`).
+  Hover: white 7%. Both fade in 0.12 s, no animation with Reduce Motion.
+- Glow: `SidebarGlow`, violet at the top left and cool blue at the bottom right, drifting a few points,
+  under the 50% ultra-thin material. Reduce Motion stops the drift; Reduce Transparency removes glow and
+  material (solid window colour).
+- Chevron turns with a short spring (off with Reduce Motion).
 
 ## Icons
 

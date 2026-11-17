@@ -23,7 +23,7 @@ struct SidebarView: View {
             Section {
                 ForEach(model.saved) { lib in
                     libraryRow(lib)
-                        .badge(lib.path == model.currentPath && model.counts.total > 0 ? Text(model.counts.total.formatted()) : nil)
+                        .sidebarRow(selected: model.sidebarSelection == .library(lib.path))
                         .tag(SidebarItem.library(lib.path))
                         .help(lib.path)
                         .contextMenu {
@@ -40,7 +40,7 @@ struct SidebarView: View {
                 Section {
                     ForEach(model.ghosts) { lib in
                         libraryRow(lib)
-                            .badge(lib.path == model.currentPath && model.counts.total > 0 ? Text(model.counts.total.formatted()) : nil)
+                            .sidebarRow(selected: model.sidebarSelection == .library(lib.path))
                             .tag(SidebarItem.library(lib.path))
                             .help("\(lib.path)\n\(GhostText.explanation)")
                             .contextMenu {
@@ -56,10 +56,23 @@ struct SidebarView: View {
             if model.library != nil {
                 Section {
                     ForEach(BuiltInView.allCases.filter { $0 != .all }) { v in
-                        Label(v.title, systemImage: v.symbol).tag(SidebarItem.view(v))
+                        SidebarRowContent {
+                            Image(systemName: v.symbol).foregroundStyle(viewTint(v))
+                        } title: {
+                            Text(v.title)
+                        }
+                        .sidebarRow(selected: model.sidebarSelection == .view(v))
+                        .tag(SidebarItem.view(v))
                     }
                 } header: {
                     SidebarHeader("Views")
+                }
+                if !model.folderTree.isEmpty {
+                    Section {
+                        ForEach(model.folderRows) { row in folderRow(row) }
+                    } header: {
+                        SidebarHeader("Folders")
+                    }
                 }
                 if !model.savedSearches.isEmpty {
                     Section {
@@ -80,12 +93,6 @@ struct SidebarView: View {
         .listStyle(.sidebar)
         .labelStyle(SidebarLabelStyle())
         .scrollContentBackground(.hidden)
-        .background {
-            ZStack {
-                WindowBackdrop()
-                if !reduceTransparency { Rectangle().fill(.ultraThinMaterial).opacity(0.5) }
-            }
-        }
         .safeAreaInset(edge: .bottom) {
             HStack {
                 Button { model.openFolderPanel() } label: { Label("Open Folder…", systemImage: "plus") }
@@ -98,6 +105,17 @@ struct SidebarView: View {
             }
             .padding(12)
             .frame(maxWidth: .infinity, alignment: .leading)
+        }
+        // One continuous backdrop behind everything, titlebar and footer included, so the light never
+        // stops at an edge: it is applied outside the list and its safe-area insets.
+        .background {
+            ZStack {
+                WindowBackdrop()
+                SidebarGlow()
+                if !reduceTransparency { Rectangle().fill(.ultraThinMaterial).opacity(0.5) }
+                SidebarTableTweaks()
+            }
+            .ignoresSafeArea()
         }
         .sheet(item: $editing) { s in SaveSearchSheet(model: model, existing: s) }
         .confirmationDialog("Forget this library?", isPresented: Binding(get: { pendingForget != nil }, set: { if !$0 { pendingForget = nil } }),
@@ -117,34 +135,61 @@ struct SidebarView: View {
     /// The library's name, editable in place. Renaming only changes the name
     /// shown here; the folder on disk is never touched.
     @ViewBuilder func libraryRow(_ lib: SavedLibrary) -> some View {
+        let count = lib.path == model.currentPath && model.counts.total > 0 ? model.counts.total : nil
         if renamingPath == lib.path {
-            Label {
+            SidebarRowContent {
+                Image(systemName: "photo.stack").foregroundStyle(DS.Tint.library)
+            } title: {
                 TextField("Name", text: $draftName)
                     .textFieldStyle(.plain)
                     .focused($renameFocused)
                     .onSubmit { commitRename(lib) }
                     .onExitCommand { renamingPath = nil }
                     .onChange(of: renameFocused) { _, focused in if !focused { commitRename(lib) } }
-            } icon: {
-                Image(systemName: "photo.stack")
             }
         } else {
-            Label {
+            SidebarRowContent(count: count) {
+                if lib.isGhost { GhostIcon(size: 16) } else { Image(systemName: "photo.stack").foregroundStyle(DS.Tint.library) }
+            } title: {
                 Text(lib.name)
-            } icon: {
-                if lib.isGhost { GhostIcon(size: 16) } else { Image(systemName: "photo.stack") }
             }
-            .padding(.vertical, lib.isGhost ? 2 : 0)
-            .padding(.leading, lib.isGhost ? 6 : 0)
-            .padding(.trailing, lib.isGhost ? 10 : 0)
             .overlay {
                 if lib.isGhost {
                     RoundedRectangle(cornerRadius: DS.Radius.medium, style: .continuous)
                         .strokeBorder(DS.Tint.ghost.opacity(0.7), style: StrokeStyle(lineWidth: 1, dash: [4, 3]))
+                        .padding(.horizontal, -DS.Space.xs)
                 }
             }
             .onTapGesture(count: 2) { pendingRename?.cancel(); beginRename(lib) }
             .simultaneousGesture(TapGesture().onEnded { slowClick(lib) })
+        }
+    }
+
+    func viewTint(_ v: BuiltInView) -> Color {
+        switch v {
+        case .generated: return DS.Tint.midjourney
+        case .photos: return DS.Tint.camera
+        default: return .secondary
+        }
+    }
+
+    /// One folder of the library. Clicking shows everything inside it, subfolders included.
+    @ViewBuilder func folderRow(_ row: FolderRow) -> some View {
+        SidebarRowContent(depth: row.node.depth - 1, chevronColumn: true, expanded: row.hasChildren ? row.isExpanded : nil,
+                          count: row.node.subtreeCount,
+                          onToggle: { model.toggleFolder(row.id) }) {
+            Image(systemName: "folder").foregroundStyle(DS.Tint.folder)
+        } title: {
+            Text(row.node.name)
+        }
+        .sidebarRow(selected: model.sidebarSelection == .folder(row.id))
+        .tag(SidebarItem.folder(row.id))
+        .help(row.node.path)
+        .accessibilityLabel("\(row.node.name), \(row.node.subtreeCount) images")
+        .contextMenu {
+            Button("Show in Finder") {
+                if let url = model.originalURL(row.node.path) { NSWorkspace.shared.activateFileViewerSelecting([url]) }
+            }
         }
     }
 
@@ -179,11 +224,12 @@ struct SidebarView: View {
 
     @ViewBuilder func savedRows(in folder: String?) -> some View {
         ForEach(model.savedSearches.filter { $0.folder == folder }) { s in
-            Label {
-                Text(s.name)
-            } icon: {
+            SidebarRowContent {
                 Circle().fill(Color(nsColor: (TagColor(rawValue: s.color) ?? .gray).color)).frame(width: 8, height: 8)
+            } title: {
+                Text(s.name)
             }
+            .sidebarRow(selected: model.sidebarSelection == .saved(s.id))
             .tag(SidebarItem.saved(s.id))
             .contextMenu {
                 Button("Edit…") { editing = s }

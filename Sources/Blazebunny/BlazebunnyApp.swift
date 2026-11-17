@@ -84,7 +84,7 @@ struct ContentView: View {
     var content: some View {
         NavigationSplitView {
             SidebarView(model: model)
-                .navigationSplitViewColumnWidth(min: 200, ideal: 232, max: 320)
+                .navigationSplitViewColumnWidth(min: 220, ideal: 248, max: 340)
         } detail: {
             VStack(spacing: 0) {
                 if model.library == nil {
@@ -98,7 +98,8 @@ struct ContentView: View {
                 } else {
                     // One row: what you are looking at, then how to narrow it.
                     HStack(spacing: 0) {
-                        PageHeader(title: model.viewTitle, subtitle: subtitle, isGhost: model.currentIsGhost)
+                        PageHeader(title: model.viewTitle, subtitle: subtitle, isGhost: model.currentIsGhost,
+                                   contextKind: model.contextKind, crumbs: model.contextCrumbs) { model.selectSidebar($0) }
                             .padding(.leading, DS.Space.l)
                         FilterRow(model: model)
                     }
@@ -108,11 +109,14 @@ struct ContentView: View {
                         ContentUnavailableView {
                             Label("No Matches", systemImage: "line.3.horizontal.decrease.circle")
                         } description: {
-                            Text(model.query.filter.isEmpty && !model.query.text.isEmpty
+                            Text(model.query.filter.isEmpty && model.query.text.isEmpty && model.query.folder != nil
+                                 ? "No images in this folder."
+                                 : model.query.filter.isEmpty && !model.query.text.isEmpty
                                  ? "No images match “\(model.query.text)”."
                                  : "No images match these filters.")
                         } actions: {
                             Button("Clear All") { model.clearAll() }
+                                .disabled(model.query.filter.isEmpty && model.query.text.isEmpty)
                         }
                         .frame(maxHeight: .infinity)
                     } else if model.items.isEmpty && model.progress.map({ $0.phase != .done }) ?? true {
@@ -204,7 +208,10 @@ struct ContentView: View {
 
     var subtitle: String {
         guard model.library != nil else { return "" }
-        let total = model.counts.total
+        // Only the first screen is loaded yet: do not show a count that is about to change.
+        if model.isPartialPage { return "" }
+        // The total of what is being browsed: the library, or the open folder with everything below it.
+        let total = model.query.folder.flatMap { model.folderTree.nodes[$0]?.subtreeCount } ?? model.counts.total
         if model.items.count == total { return "\(total.formatted()) images" }
         return "\(model.items.count.formatted()) of \(total.formatted()) images"
     }
@@ -216,8 +223,21 @@ struct PageHeader: View {
     let title: String
     let subtitle: String
     var isGhost = false
+    var contextKind = ""
+    var crumbs: [LibraryModel.Crumb] = []
+    var onSelect: (SidebarItem) -> Void = { _ in }
 
     var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            if !contextKind.isEmpty { ContextLine(kind: contextKind, crumbs: crumbs, isGhost: isGhost, onSelect: onSelect) }
+            titleRow
+        }
+        .frame(maxWidth: 380, alignment: .leading)
+        .fixedSize(horizontal: true, vertical: false)
+        .animation(DS.Motion.view, value: title)
+    }
+
+    private var titleRow: some View {
         HStack(alignment: .firstTextBaseline, spacing: DS.Space.s) {
             if isGhost { GhostIcon(size: 18).alignmentGuide(.firstTextBaseline) { $0[.bottom] - 2 } }
             Text(title)
@@ -231,9 +251,6 @@ struct PageHeader: View {
                     .fixedSize()
             }
         }
-        .frame(maxWidth: 380, alignment: .leading)
-        .fixedSize(horizontal: true, vertical: false)
-        .animation(DS.Motion.view, value: title)
     }
 }
 

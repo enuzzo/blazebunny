@@ -464,6 +464,7 @@ struct SaveSearchSheet: View {
     var summary: String {
         let f = model.query.filter
         var parts: [String] = []
+        if let folder = model.query.folder { parts.append("in " + folder.replacingOccurrences(of: "/", with: " › ")) }
         if !model.query.text.isEmpty { parts.append("“\(model.query.text)”") }
         if !f.types.isEmpty { parts.append(f.types.sorted().joined(separator: " or ")) }
         if f.hasShape { parts.append((f.orientations.map(\.title).sorted() + f.ratios.sorted()).joined(separator: " or ")) }
@@ -472,6 +473,7 @@ struct SaveSearchSheet: View {
         if !f.versions.isEmpty { parts.append(f.versions.sorted().map(FacetLabel.version).joined(separator: " or ")) }
         if !f.params.isEmpty { parts.append(f.params.sorted().map { "--" + $0 }.joined(separator: " and ")) }
         if !f.cameras.isEmpty { parts.append(f.cameras.sorted().joined(separator: " or ")) }
+        if model.query.folder != nil, parts.count == 1 { return parts[0] + " · " + model.query.sort.title }
         return parts.isEmpty ? "All images, \(model.query.sort.title.lowercased())." : parts.joined(separator: " · ") + " · " + model.query.sort.title
     }
 }

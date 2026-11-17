@@ -38,10 +38,23 @@ enum DS {
         static let statusBar: CGFloat = 32
         /// Fixed icon column in sidebar rows, so every row's text lines up.
         static let sidebarIcon: CGFloat = 20
+        /// Height of a sidebar row.
+        static let sidebarRow: CGFloat = 28
+        /// Column for the disclosure chevron in front of every sidebar row (empty when a row has none).
+        static let sidebarChevron: CGFloat = 14
+        /// How far each folder level moves in.
+        static let sidebarIndent: CGFloat = 14
+        /// Width and height of the thin marker at the leading edge of the selected row.
+        static let sidebarMarkerWidth: CGFloat = 3
+        static let sidebarMarkerHeight: CGFloat = 14
+        /// Glyphs: folder, library and view icons in the sidebar.
+        static let sidebarGlyph: CGFloat = 14
         /// Tiny glyphs inside pills (chevron, clear cross).
         static let microIcon: CGFloat = 8
         /// Height of a small status badge (source chip, ghost badge).
         static let badge: CGFloat = 22
+        /// Advance of one digit or separator in the mono at 11.5 pt (0.612 em), rounded up.
+        static let monoDigitWidth: CGFloat = 7.2
         static let dataBar: CGFloat = 72
         static let dataBarHeight: CGFloat = 4
         static let inspectorLabel: CGFloat = 92
@@ -60,12 +73,21 @@ enum DS {
         static let midjourney = Color(red: 0.68, green: 0.72, blue: 1.0)
         static let stableDiffusion = Color(red: 0.557, green: 0.839, blue: 0.627)
         static let camera = Color(red: 0.486, green: 0.812, blue: 0.890)
+        /// Location (GPS) group in the metadata inspector: rose #E2ABC6, matched lightness to the others.
+        static let location = Color(red: 0.886, green: 0.671, blue: 0.776)
         /// Text of an active filter: the system accent lightened for contrast on dark.
         static var activeText: Color {
             Color(nsColor: NSColor.controlAccentColor.blended(withFraction: 0.35, of: .white) ?? .controlAccentColor)
         }
         /// One opacity for every tinted fill.
         static let fill: Double = 0.15
+        /// Sidebar icons: one tint per kind of thing, matched in lightness. Colour sits on the icon
+        /// only; text stays neutral. Folders and saved searches take their tints from the palette
+        /// below; a library is violet.
+        static let library = Color(red: 0.76, green: 0.66, blue: 1.0)
+        static let folder = Color(red: 0.557, green: 0.839, blue: 0.627)
+        /// Opacity of the selected sidebar row's fill (the accent, clearly visible, not flat grey).
+        static let selection: Double = 0.30
         /// Offline or something needs attention. Distinct from the amber of ghosts.
         static let warning = Color(red: 0.96, green: 0.45, blue: 0.38)
     }
@@ -132,6 +154,8 @@ extension DS {
         /// Bars that show data are neutral: the accent is kept for selection.
         static let dataBar = Color.white.opacity(0.45)
         static let dataTrack = Color.white.opacity(0.08)
+        /// A sidebar row under the pointer.
+        static let hover = Color.white.opacity(0.07)
         static let glassFill = Color.white.opacity(0.045)
         static let glassFillSolid = Color(red: 0.094, green: 0.098, blue: 0.110)
     }
@@ -201,6 +225,70 @@ struct SidebarLabelStyle: LabelStyle {
     }
 }
 
+/// A slow, soft coloured light behind the sidebar so the glass has something to refract: violet at the
+/// top, a cool blue low down. Drifts a few points; still when Reduce Motion is on, absent (solid
+/// window colour only) when Reduce Transparency is on.
+struct SidebarGlow: View {
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
+
+    var body: some View {
+        if !reduceTransparency {
+            TimelineView(.animation(minimumInterval: 1.0 / 20, paused: reduceMotion)) { ctx in
+                let t = reduceMotion ? 0 : ctx.date.timeIntervalSinceReferenceDate
+                ZStack {
+                    RadialGradient(colors: [DS.Tint.library.opacity(0.13), .clear],
+                                   center: UnitPoint(x: 0.15 + 0.06 * sin(t / 8), y: 0.02 + 0.03 * cos(t / 10)),
+                                   startRadius: 0, endRadius: 460)
+                    RadialGradient(colors: [Color(red: 0.30, green: 0.52, blue: 1.0).opacity(0.10), .clear],
+                                   center: UnitPoint(x: 0.85 + 0.05 * cos(t / 9), y: 0.98 + 0.03 * sin(t / 12)),
+                                   startRadius: 0, endRadius: 480)
+                }
+            }
+            .allowsHitTesting(false)
+        }
+    }
+}
+
+/// What every sidebar row shares: 28 pt height, a visible hover, and a clearly tinted selection with a
+/// thin marker at its leading edge. The system's grey selection is switched off (`SidebarTableTweaks`).
+struct SidebarRowChrome: ViewModifier {
+    var selected: Bool
+    @State private var hovering = false
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    func body(content: Content) -> some View {
+        let shape = RoundedRectangle(cornerRadius: DS.Radius.medium, style: .continuous)
+        content
+            .frame(height: DS.Size.sidebarRow)
+            // Content sits flush with the section title; the fill is drawn around it, not by padding it.
+            .background {
+                if selected {
+                    shape.fill(Color.accentColor.opacity(DS.Tint.selection)).padding(.horizontal, -DS.Space.xs)
+                } else if hovering {
+                    shape.fill(DS.Palette.hover).padding(.horizontal, -DS.Space.xs)
+                }
+            }
+            .overlay(alignment: .leading) {
+                if selected {
+                    Capsule().fill(Color.accentColor)
+                        .frame(width: DS.Size.sidebarMarkerWidth, height: DS.Size.sidebarMarkerHeight)
+                        .padding(.leading, -DS.Space.xs + 1)
+                }
+            }
+            .contentShape(shape)
+            .onHover { hovering = $0 }
+            .animation(reduceMotion ? nil : .easeOut(duration: 0.12), value: hovering)
+            .animation(reduceMotion ? nil : .easeOut(duration: 0.12), value: selected)
+            .listRowBackground(Color.clear)
+            .listRowSeparator(.hidden)
+            .listRowInsets(EdgeInsets(top: 0, leading: 0, bottom: 0, trailing: 0))
+    }
+}
+
+extension View {
+    func sidebarRow(selected: Bool) -> some View { modifier(SidebarRowChrome(selected: selected)) }
+}
 /// Section title in the sidebar. All of them share one quiet style; a tint
 /// and icon are only for ghosts.
 struct SidebarHeader: View {
@@ -218,7 +306,7 @@ struct SidebarHeader: View {
     var body: some View {
         HStack(spacing: DS.Space.iconGap) {
             icon
-            Text(title).dsText(.metaStrong)
+            Text(title).dsText(.headline)
         }
         .foregroundStyle(tint)
     }

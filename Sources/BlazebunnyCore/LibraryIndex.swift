@@ -53,6 +53,22 @@ public struct ThumbnailLocation: Sendable, Equatable {
     }
 }
 
+/// One folder of the library's tree. The library root itself is not a node: top-level
+/// folders have `parentID == nil`. Items directly in the root belong to no node.
+public struct DirNode: Sendable, Equatable, Identifiable {
+    public var id: Int64
+    public var parentID: Int64?
+    public var name: String
+    /// Path relative to the library root, "/"-separated, no leading slash.
+    public var path: String
+    /// 1 for a top-level folder.
+    public var depth: Int
+    /// Items directly in this folder.
+    public var directCount: Int
+    /// Items in this folder and every folder below it.
+    public var subtreeCount: Int
+}
+
 public enum ItemSort: String, Codable, Sendable, CaseIterable {
     case newestFirst, oldestFirst, name
 
@@ -70,9 +86,11 @@ public enum ItemSort: String, Codable, Sendable, CaseIterable {
 /// The SQLite index of one library. All calls are serialised on an internal
 /// lock, so it can be shared between the scanner and the UI.
 public final class LibraryIndex: @unchecked Sendable {
-    static let schemaVersion = 2
+    static let schemaVersion = 3
     private let db: SQLiteDB
     private let lock = NSLock()
+    /// Folder path to `dirs.id`. Only touched under `lock` (or during migration).
+    private var dirCache: [String: Int64] = [:]
 
     public init(url: URL) throws {
         // An index file that predates the creation-date key tells us when the
@@ -156,6 +174,37 @@ public final class LibraryIndex: @unchecked Sendable {
                 try db.run("INSERT OR REPLACE INTO library(key, value) VALUES('schema_version', '2')")
             }
         }
+        if version < 3 {
+            // Folder tree. Filled from the stored paths only: no disk is read, and thumbnails and
+            // metadata are untouched.
+            try db.transaction {
+                try db.exec("""
+                CREATE TABLE IF NOT EXISTS dirs(
+                  id INTEGER PRIMARY KEY,
+                  parent_id INTEGER,
+                  name TEXT NOT NULL,
+                  path TEXT UNIQUE NOT NULL,
+                  depth INTEGER NOT NULL);
+                CREATE INDEX IF NOT EXISTS dirs_parent ON dirs(parent_id);
+                ALTER TABLE items ADD COLUMN dir_id INTEGER;
+                """)
+                _ = try ensureDir("")
+                var rows: [(Int64, String)] = []
+                try db.query("SELECT id, rel_path FROM items") { rows.append(($0.int(0), $0.string(1) ?? "")) }
+                for (id, path) in rows {
+                    try db.run("UPDATE items SET dir_id = ? WHERE id = ?", [try ensureDir(Self.dirPath(of: path)), id])
+                }
+                // Folder scope and the counts per folder: one index covers both.
+                try db.exec("CREATE INDEX IF NOT EXISTS items_dir_sort ON items(dir_id, coalesce(created_at, file_mtime))")
+                try db.run("INSERT OR REPLACE INTO library(key, value) VALUES('schema_version', '3')")
+            }
+        }
+    }
+
+    /// Refreshes the query planner's statistics (sampled, so cheap even on 100k rows). Without
+    /// them SQLite guesses, and can walk a big filter or full-text index instead of the folder index.
+    public func optimize() throws {
+        try sync { try db.exec("PRAGMA analysis_limit=1000; PRAGMA optimize=0x10002;") }
     }
 
     // MARK: - Library key/value
@@ -180,14 +229,14 @@ public final class LibraryIndex: @unchecked Sendable {
     // MARK: - Summary
 
     /// Totals for the items a filter and search would show.
-    public func summary(filter: FilterState = FilterState(), search: String? = nil) throws -> LibrarySummary {
+    public func summary(filter: FilterState = FilterState(), search: String? = nil, folder: Int64? = nil) throws -> LibrarySummary {
         try sync {
-            let (w, args) = Self.whereClause(filter, search: search)
+            let (w, args) = Self.whereClause(filter, search: search, scope: try scopeClause(folder))
             var s = LibrarySummary()
             try db.query("""
             SELECT count(*), coalesce(sum(file_size), 0), min(\(Self.dateExpr)), max(\(Self.dateExpr)),
                    coalesce(sum(prompt_raw IS NOT NULL AND prompt_raw != ''), 0)
-            FROM items WHERE \(w)
+            FROM \(itemsTable(folder)) WHERE \(w)
             """, args) { r in
                 s.total = Int(r.int(0))
                 s.totalBytes = r.int(1)
@@ -198,7 +247,7 @@ public final class LibraryIndex: @unchecked Sendable {
             func group(_ column: String) throws -> [FacetValue] {
                 var out: [FacetValue] = []
                 try db.query("""
-                SELECT \(column), count(*) AS n FROM items WHERE \(w) AND \(column) IS NOT NULL
+                SELECT \(column), count(*) AS n FROM \(itemsTable(folder)) WHERE \(w) AND \(column) IS NOT NULL
                 GROUP BY \(column) ORDER BY n DESC
                 """, args) { r in out.append(FacetValue(value: r.string(0) ?? "", count: Int(r.int(1)))) }
                 return out
@@ -227,13 +276,16 @@ public final class LibraryIndex: @unchecked Sendable {
         try sync {
             try db.transaction {
                 for f in files {
+                    let dir = try ensureDir(Self.dirPath(of: f.relPath))
                     try db.run("""
-                    INSERT INTO items(rel_path, file_name, file_size, file_mtime, kind) VALUES(?, ?, ?, ?, ?)
+                    INSERT INTO items(rel_path, file_name, file_size, file_mtime, kind, dir_id) VALUES(?, ?, ?, ?, ?, ?)
                     ON CONFLICT(rel_path) DO UPDATE SET
                       file_size = excluded.file_size, file_mtime = excluded.file_mtime, kind = excluded.kind,
+                      dir_id = excluded.dir_id,
                       meta_state = 0, thumb_state = 0, thumb_pack = NULL, thumb_offset = NULL, thumb_length = NULL
                     WHERE items.file_size != excluded.file_size OR items.file_mtime != excluded.file_mtime
-                    """, [f.relPath, (f.relPath as NSString).lastPathComponent, f.size, f.mtime, f.kind.rawValue])
+                       OR items.dir_id IS NOT excluded.dir_id
+                    """, [f.relPath, (f.relPath as NSString).lastPathComponent, f.size, f.mtime, f.kind.rawValue, dir])
                 }
             }
         }
@@ -245,6 +297,116 @@ public final class LibraryIndex: @unchecked Sendable {
                 for p in relPaths { try db.run("DELETE FROM items WHERE rel_path = ?", [p]) }
             }
         }
+    }
+
+    // MARK: - Folders
+
+    /// "a/b/c.png" -> "a/b"; a file in the root -> "".
+    static func dirPath(of relPath: String) -> String {
+        guard let i = relPath.lastIndex(of: "/") else { return "" }
+        return String(relPath[..<i])
+    }
+
+    /// Finds or creates the folder row for `path` and every folder above it.
+    private func ensureDir(_ path: String) throws -> Int64 {
+        if let id = dirCache[path] { return id }
+        var found: Int64?
+        try db.query("SELECT id FROM dirs WHERE path = ?", [path]) { found = $0.int(0) }
+        if let found { dirCache[path] = found; return found }
+        var parent: Int64?
+        var name = ""
+        var depth = 0
+        if !path.isEmpty {
+            let parentPath = Self.dirPath(of: path)
+            parent = try ensureDir(parentPath)
+            name = path.lastIndex(of: "/").map { String(path[path.index(after: $0)...]) } ?? path
+            depth = path.reduce(1) { $1 == "/" ? $0 + 1 : $0 }
+        }
+        try db.run("INSERT INTO dirs(parent_id, name, path, depth) VALUES(?, ?, ?, ?)", [parent, name, path, depth])
+        let id = db.lastInsertRowID
+        dirCache[path] = id
+        return id
+    }
+
+    /// Records folders even when they hold no supported image (so empty folders show in the tree).
+    public func upsertDirectories(_ paths: [String]) throws {
+        try sync {
+            try db.transaction { for p in paths where !p.isEmpty { _ = try ensureDir(p) } }
+        }
+    }
+
+    /// Removes folder rows that are not in `keeping`, except folders that hold items (directly or
+    /// below) and the folders above those. Only call this with a trustworthy listing.
+    public func removeDirectories(keeping: Set<String>) throws {
+        try sync {
+            var dirs: [(id: Int64, path: String)] = []
+            try db.query("SELECT id, path FROM dirs WHERE path != ''") { dirs.append(($0.int(0), $0.string(1) ?? "")) }
+            var keep = keeping
+            try db.query("SELECT d.path FROM dirs d WHERE EXISTS (SELECT 1 FROM items WHERE items.dir_id = d.id)") { r in
+                var p = r.string(0) ?? ""
+                while !p.isEmpty, keep.insert(p).inserted { p = Self.dirPath(of: p) }
+            }
+            // Ancestors of listed folders are part of any real listing, but be safe.
+            for p in keeping { var q = Self.dirPath(of: p); while !q.isEmpty, keep.insert(q).inserted { q = Self.dirPath(of: q) } }
+            let doomed = dirs.filter { !keep.contains($0.path) }
+            guard !doomed.isEmpty else { return }
+            try db.transaction {
+                for d in doomed { try db.run("DELETE FROM dirs WHERE id = ?", [d.id]); dirCache[d.path] = nil }
+            }
+        }
+    }
+
+    public func dirID(forPath path: String) throws -> Int64? {
+        try sync {
+            if let id = dirCache[path] { return id }
+            var id: Int64?
+            try db.query("SELECT id FROM dirs WHERE path = ?", [path]) { id = $0.int(0) }
+            return id
+        }
+    }
+
+    /// Every folder with its counts, in no particular order. Built from one grouped read of the
+    /// folder index and an in-memory roll-up, so it stays cheap on 100k items.
+    public func directoryTree() throws -> [DirNode] {
+        try sync {
+            var direct: [Int64: Int] = [:]
+            try db.query("SELECT dir_id, count(*) FROM items WHERE dir_id IS NOT NULL GROUP BY dir_id") { direct[$0.int(0)] = Int($0.int(1)) }
+            var rootID: Int64 = -1
+            try db.query("SELECT id FROM dirs WHERE path = ''") { rootID = $0.int(0) }
+            var nodes: [DirNode] = []
+            try db.query("SELECT id, parent_id, name, path, depth FROM dirs WHERE path != '' ORDER BY id") { r in
+                let parent = r.intOrNil(1).map(Int64.init)
+                nodes.append(DirNode(id: r.int(0), parentID: parent == rootID ? nil : parent, name: r.string(2) ?? "",
+                                     path: r.string(3) ?? "", depth: Int(r.int(4)),
+                                     directCount: direct[r.int(0)] ?? 0, subtreeCount: direct[r.int(0)] ?? 0))
+            }
+            var position: [Int64: Int] = [:]
+            for (i, n) in nodes.enumerated() { position[n.id] = i }
+            // Deepest first, so each folder's total is complete before it is added to its parent.
+            for i in nodes.indices.sorted(by: { nodes[$0].depth > nodes[$1].depth }) {
+                if let p = nodes[i].parentID, let pi = position[p] { nodes[pi].subtreeCount += nodes[i].subtreeCount }
+            }
+            return nodes
+        }
+    }
+
+    /// SQL that limits a query to one folder and everything below it, as an integer match on `dir_id`.
+    /// A leaf folder is a plain equality; a folder with subfolders walks the (small) `dirs` table.
+    private func scopeClause(_ folder: Int64?) throws -> (String, [Any?])? {
+        guard let folder else { return nil }
+        var hasChildren = false
+        try db.query("SELECT 1 FROM dirs WHERE parent_id = ? LIMIT 1", [folder]) { _ in hasChildren = true }
+        if !hasChildren { return ("items.dir_id = ?", [folder]) }
+        return ("""
+        items.dir_id IN (WITH RECURSIVE sub(id) AS (SELECT ? UNION ALL SELECT d.id FROM dirs d JOIN sub ON d.parent_id = sub.id) SELECT id FROM sub)
+        """, [folder])
+    }
+
+    /// `items`, forced onto the folder index when a scope is set. Without the hint SQLite, which has no
+    /// statistics on a fresh library, prefers a big source or full-text match and filters the folder
+    /// afterwards (40 to 90 ms on a subtree of 8k in 100k; with the hint 1 to 15 ms).
+    private func itemsTable(_ folder: Int64?) -> String {
+        folder == nil ? "items" : "items INDEXED BY items_dir_sort"
     }
 
     // MARK: - Metadata
@@ -344,9 +506,10 @@ public final class LibraryIndex: @unchecked Sendable {
     static let dateExpr = "coalesce(items.created_at, items.file_mtime)"
 
     /// WHERE clause for `filter` and `search`, leaving out `excluding` (for facet counts).
-    static func whereClause(_ f: FilterState, search: String?, excluding: Facet? = nil) -> (String, [Any?]) {
+    static func whereClause(_ f: FilterState, search: String?, excluding: Facet? = nil, scope: (String, [Any?])? = nil) -> (String, [Any?]) {
         var parts: [String] = []
         var args: [Any?] = []
+        if let scope { parts.append(scope.0); args.append(contentsOf: scope.1) }
         func placeholders(_ n: Int) -> String { Array(repeating: "?", count: n).joined(separator: ",") }
         func inList(_ column: String, _ values: [String]) {
             parts.append("\(column) IN (\(placeholders(values.count)))")
@@ -385,7 +548,9 @@ public final class LibraryIndex: @unchecked Sendable {
         return (parts.isEmpty ? "1" : parts.joined(separator: " AND "), args)
     }
 
-    public func items(filter: FilterState = FilterState(), search: String? = nil, sort: ItemSort = .newestFirst) throws -> [BrowseItem] {
+    /// `folder` limits the result to that folder and everything below it; `limit` returns only the first rows.
+    public func items(filter: FilterState = FilterState(), search: String? = nil, sort: ItemSort = .newestFirst,
+                      folder: Int64? = nil, limit: Int? = nil) throws -> [BrowseItem] {
         try sync {
             let order: String
             switch sort {
@@ -393,12 +558,13 @@ public final class LibraryIndex: @unchecked Sendable {
             case .oldestFirst: order = "\(Self.dateExpr) ASC, items.id ASC"
             case .name: order = "items.file_name COLLATE NOCASE ASC"
             }
-            let (w, args) = Self.whereClause(filter, search: search)
+            let (w, args) = Self.whereClause(filter, search: search, scope: try scopeClause(folder))
             var out: [BrowseItem] = []
-            out.reserveCapacity(20_000)
+            out.reserveCapacity(limit ?? 20_000)
+            let tail = limit.map { " LIMIT \($0)" } ?? ""
             try db.query("""
-            SELECT id, rel_path, \(Self.dateExpr), width, height, thumb_state, source, aspect FROM items
-            WHERE \(w) ORDER BY \(order)
+            SELECT id, rel_path, \(Self.dateExpr), width, height, thumb_state, source, aspect FROM \(itemsTable(folder))
+            WHERE \(w) ORDER BY \(order)\(tail)
             """, args) { r in
                 out.append(BrowseItem(id: r.int(0), relPath: r.string(1)!, sortDate: r.double(2) ?? 0,
                                       width: r.intOrNil(3), height: r.intOrNil(4), hasThumbnail: r.int(5) == 1,
@@ -415,13 +581,13 @@ public final class LibraryIndex: @unchecked Sendable {
 
     /// Values of `facet` with how many items each would show, applying every
     /// other active filter. Shape returns orientations as "o:portrait" and ratios as "r:16:9".
-    public func facetCounts(_ facet: Facet, filter: FilterState, search: String?) throws -> [FacetValue] {
+    public func facetCounts(_ facet: Facet, filter: FilterState, search: String?, folder: Int64? = nil) throws -> [FacetValue] {
         try sync {
-            let (w, args) = Self.whereClause(filter, search: search, excluding: facet)
+            let (w, args) = Self.whereClause(filter, search: search, excluding: facet, scope: try scopeClause(folder))
             var out: [FacetValue] = []
             func group(_ column: String, prefix: String = "", limit: Int = 200) throws {
                 try db.query("""
-                SELECT \(column), count(*) AS n FROM items WHERE \(w) AND \(column) IS NOT NULL
+                SELECT \(column), count(*) AS n FROM \(itemsTable(folder)) WHERE \(w) AND \(column) IS NOT NULL
                 GROUP BY \(column) ORDER BY n DESC LIMIT \(limit)
                 """, args) { r in out.append(FacetValue(value: prefix + (r.string(0) ?? ""), count: Int(r.int(1)))) }
             }
@@ -435,7 +601,7 @@ public final class LibraryIndex: @unchecked Sendable {
             case .camera: try group("items.camera")
             case .param:
                 try db.query("""
-                SELECT ip.facet, count(DISTINCT ip.item_id) AS n FROM item_params ip JOIN items ON items.id = ip.item_id
+                SELECT ip.facet, count(DISTINCT ip.item_id) AS n FROM item_params ip JOIN \(itemsTable(folder)) ON items.id = ip.item_id
                 WHERE \(w) GROUP BY ip.facet ORDER BY n DESC LIMIT 60
                 """, args) { r in out.append(FacetValue(value: r.string(0) ?? "", count: Int(r.int(1)))) }
             case .date:
@@ -446,12 +612,12 @@ public final class LibraryIndex: @unchecked Sendable {
     }
 
     /// Item count per month ("2025-03"), oldest first, ignoring the date filter.
-    public func monthHistogram(filter: FilterState, search: String?) throws -> [MonthCount] {
+    public func monthHistogram(filter: FilterState, search: String?, folder: Int64? = nil) throws -> [MonthCount] {
         try sync {
-            let (w, args) = Self.whereClause(filter, search: search, excluding: .date)
+            let (w, args) = Self.whereClause(filter, search: search, excluding: .date, scope: try scopeClause(folder))
             var out: [MonthCount] = []
             try db.query("""
-            SELECT strftime('%Y-%m', \(Self.dateExpr), 'unixepoch', 'localtime') AS m, count(*) FROM items
+            SELECT strftime('%Y-%m', \(Self.dateExpr), 'unixepoch', 'localtime') AS m, count(*) FROM \(itemsTable(folder))
             WHERE \(w) GROUP BY m ORDER BY m
             """, args) { r in out.append(MonthCount(month: r.string(0) ?? "", count: Int(r.int(1)))) }
             return out

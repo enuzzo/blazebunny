@@ -68,6 +68,7 @@ public final class FolderScanner: @unchecked Sendable {
         var seen = Set<String>()
         var batch: [FileRecord] = []
         let listing = enumerate()
+        try index.upsertDirectories(listing.dirs)
         for record in listing.records {
             if isCancelled { return }
             seen.insert(record.relPath)
@@ -87,6 +88,7 @@ public final class FolderScanner: @unchecked Sendable {
         let listingIsTrustworthy = listing.complete && isRootReachable() && !(seen.isEmpty && !known.isEmpty)
         let gone = known.keys.filter { !seen.contains($0) }
         if listingIsTrustworthy, !gone.isEmpty { try index.deleteFiles(relPaths: gone) }
+        if listingIsTrustworthy { try index.removeDirectories(keeping: Set(listing.dirs)) }
 
         var counts = try index.counts()
         p.total = counts.total
@@ -182,26 +184,34 @@ public final class FolderScanner: @unchecked Sendable {
 
     /// Lists supported files in directory order, skipping hidden files and packages.
     /// `complete` is false when any directory could not be read.
-    func enumerate() -> (records: [FileRecord], complete: Bool) {
-        let keys: [URLResourceKey] = [.isRegularFileKey, .fileSizeKey, .contentModificationDateKey]
+    func enumerate() -> (records: [FileRecord], dirs: [String], complete: Bool) {
+        let keys: [URLResourceKey] = [.isRegularFileKey, .isDirectoryKey, .fileSizeKey, .contentModificationDateKey]
         let hadError = Locked(false)
         guard let e = FileManager.default.enumerator(at: root, includingPropertiesForKeys: keys,
                                                      options: [.skipsHiddenFiles, .skipsPackageDescendants],
                                                      errorHandler: { _, _ in hadError.set(true); return true })
-        else { return ([], false) }
+        else { return ([], [], false) }
         let rootPath = root.resolvingSymlinksInPath().path
         var out: [FileRecord] = []
+        var dirs: [String] = []
+        func relative(_ url: URL) -> String {
+            var path = url.resolvingSymlinksInPath().path
+            if path.hasPrefix(rootPath) { path = String(path.dropFirst(rootPath.count)) }
+            return path.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+        }
         for case let url as URL in e {
+            if (try? url.resourceValues(forKeys: [.isDirectoryKey]))?.isDirectory == true {
+                let p = relative(url)
+                if !p.isEmpty { dirs.append(p) }
+                continue
+            }
             let kind = ItemKind(pathExtension: url.pathExtension)
             guard kind.isSupported,
                   let v = try? url.resourceValues(forKeys: Set(keys)), v.isRegularFile == true else { continue }
-            var path = url.resolvingSymlinksInPath().path
-            if path.hasPrefix(rootPath) { path = String(path.dropFirst(rootPath.count)) }
-            path = path.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
-            out.append(FileRecord(relPath: path, size: Int64(v.fileSize ?? 0),
+            out.append(FileRecord(relPath: relative(url), size: Int64(v.fileSize ?? 0),
                                   mtime: v.contentModificationDate?.timeIntervalSince1970 ?? 0, kind: kind))
         }
-        return (out, !hadError.value)
+        return (out, dirs, !hadError.value)
     }
 
     /// Runs `body` over `items` with at most `ioConcurrency` in flight, keeping order.

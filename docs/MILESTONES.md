@@ -62,10 +62,48 @@ committed), `[ ]` to do. Design context and the proposed order live in
 
 ## M5: folder trees
 
-- [ ] Add a folder that contains subfolders.
-- [ ] Clicking the parent shows everything below it, together.
-- [ ] Clicking one subfolder shows only its content, and its own subfolders in turn,
-      to any depth. Sidebar shows the tree.
+Design: `docs/superpowers/specs/2026-11-17-libraries-and-folders-design.md`; plan for stage 1:
+`docs/superpowers/plans/2026-11-17-m5-stage1-folder-tree.md`. Stages 2 to 8 are not started.
+
+Stage 1 (folder tree inside today's one-folder libraries), built 2026-11-17, uncommitted:
+- [x] Core: schema v3 (`dirs`, `items.dir_id`, index `items_dir_sort(dir_id, date)`), migration from v2 fills them from
+      `rel_path` without reading disk; thumbnails and metadata kept. `directoryTree()`, `dirID(forPath:)`,
+      `items/summary/facetCounts/monthHistogram(... folder:)`, `items(... limit:)`, `optimize()`.
+      Scanner records every directory (empty ones too) and prunes them only on a trustworthy listing.
+      `SearchQuery.folder` (a path) so saved searches remember their folder. 79 tests pass (62 before).
+- [x] App: Folders section (disclosure tree, counts, expand state per library), folder scope feeds grid,
+      summary, filter pills, facet counts, saved searches and Save Search; context line above the title;
+      clicking the library shows everything; two-phase load (first 400 rows, then the rest).
+- [x] Alive sidebar per DESIGN-SYSTEM.md (glow, tinted icons, tinted selection with marker, hover).
+- Scope is an integer match on `dir_id` (leaf: `=`, otherwise a recursive CTE over the small `dirs` table).
+  Finding: with no planner statistics SQLite filtered a source or full-text match first and the folder
+  afterwards (a source filter in an 8k subtree: 59 ms, search 95 ms); `INDEXED BY items_dir_sort` when a scope is
+  set fixes it (6 ms and 38 ms). `PRAGMA optimize` did not help.
+
+Measured with `swift run -c release bbscopebench` (generated 100 000 items, 1 109 folders, an 8 000-file
+branch; internal SSD, warm; best of 5; no real data):
+
+| What | Budget | Measured |
+|---|---|---|
+| Tree build, 1 109 folders | about 34 ms | 2.2 ms |
+| Select an 8k-item folder: first 400 rows | 50 ms | 0.2 ms |
+| Select an 8k-item folder: complete (items, counts, facets, summary) | 150 ms | 22 ms |
+| Select a 92-item leaf folder: first rows / complete | 50 / 150 ms | 0.03 / 15 ms |
+| Whole library (100k): first 400 rows / complete | 50 / 150 ms | 0.1 / 86 ms |
+| Filter change (source) inside the 8k folder | 100 ms | 6 ms |
+| Filter change (source), whole library | 100 ms | 71 ms |
+| Text search in the 8k folder (selective / word in 66% of items) | 100 ms | 7.6 / 38 ms |
+| Text search, whole library (selective / word in 66% of items) | 100 ms | 8.4 / **130 ms** |
+| Month histogram in the folder / whole library | n/a | 2.6 / 37 ms |
+| Memory (RSS) after generating and querying 100k | bounded | 74 to 82 MB |
+
+Not met: a whole-library full-text search for a word that 66% of the images contain takes 130 ms (budget 100 ms).
+Not caused by folders (it existed before): SQLite builds the 66k-row match set. A real prompt word is
+far more selective (8 ms). A fix would page the result; left for the speed assessment (stage 8).
+Other notes: a reload because of a filter no longer recounts the whole library (`counts()` is 15 ms at
+100k); the folder tree is rebuilt off the main thread; writing 100k metadata rows takes 27 s (FTS triggers,
+not new, not measured on the UI path). Not measured: scrolling and thumbnail delivery, launch time, main-thread
+cost of rebuilding the `FolderTree` for tens of thousands of folders.
 
 ## M6: full-screen viewer
 
@@ -200,3 +238,38 @@ Applied (spec in `docs/DESIGN-SYSTEM.md`):
 Left as is on purpose: base sizes 13/12/11/10, display 40 and title 20, system primary/secondary
 text, the 2 pt selection ring, 9% hairline, 16 pt left edge shared by title, month header and grid,
 ghost signals, 28 pt rows, 92 pt label column, no glass on the inspector.
+
+## M10: grid layouts and spacing (owner, 2026-11-17)
+
+- [ ] Choose how a folder is shown, at a glance, from the toolbar (one control, remembered per
+      project): **Square** (1:1, cropped: today's Fill), **Square, whole image** (today's Fit),
+      **Justified rows** (true proportions, every row flush), **Masonry** (columns, true proportions),
+      and possibly a **packed / mosaic** layout ("isotope": mixed sizes packed tightly). Confirm the
+      last one's meaning with the owner before building.
+- [ ] Preferences: horizontal and vertical spacing between images, separately, as numbers with a
+      live preview.
+- [ ] Notes: the index already stores width and height per item, so rows and columns can be laid out
+      without opening files. Layout must stay O(n) and smooth on 100k items; month sections and
+      the "fill the row exactly" behaviour must carry over; thumbnail size slider keeps working
+      (as target row height or column width).
+- [ ] Keep Space-to-view, keyboard navigation and selection ring identical in every layout.
+
+## Icons (owner, 2026-11-17, nice to have)
+
+- [ ] A rounder, more "designed" and less formal line-icon set than SF Symbols, if a good free one
+      fits. Candidates to evaluate: Phosphor (MIT, rounded line weights), Lucide (ISC), Tabler (MIT).
+      Needs: all icons in one family and weight, consistent with the type (round terminals), usable
+      from SwiftUI as template images, and listed in `NOTICE` with its licence. Decide with a
+      side-by-side mock like the typeface and sidebar ones.
+
+## Owner notes, 2026-11-17 (later)
+
+- [x] Summary bars: one fixed count column per table so every bar starts and ends at the same x
+      (a longer number used to push its bar left). Rule added to DESIGN-SYSTEM.md.
+- [x] Hero number: the squeezed thousands separator is centred in its gap.
+- [x] Inspector deviations accepted by the owner (2026-11-17) and applied: no rule on value rows (hover highlight), `DS.Tint.location` rose #E2ABC6 reserved for the Location group (M7), "Copy Exposure" as the one filled button for photos.
+- [ ] The inspector (right sidebar) must be beautiful, not only technical: a clear focal point,
+      calm rhythm, a little delight. Fable was asked to design it (summary, one image, several images,
+      folder); apply its design when it arrives.
+- [ ] Icons: demo of five free families made (Phosphor regular and duotone, Lucide, Tabler, Iconoir);
+      owner to choose, then bundle with licences in NOTICE.

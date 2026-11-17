@@ -8,6 +8,11 @@ struct SavedLibrary: Codable, Hashable, Identifiable {
     var bookmark: Data?
     /// A name the user chose. Display only: the folder itself is never renamed.
     var displayName: String?
+    /// Set for ghost (temporary) libraries: where their index and thumbnails live.
+    /// Never written to disk: a ghost is not remembered across launches.
+    var ghostBase: URL?
+    var isGhost: Bool { ghostBase != nil }
+    private enum CodingKeys: String, CodingKey { case path, bookmark, displayName }
     var id: String { path }
     var folderName: String { (path as NSString).lastPathComponent }
     var name: String { displayName ?? folderName }
@@ -76,6 +81,8 @@ enum TagColor: String, CaseIterable {
 @MainActor @Observable
 final class LibraryModel {
     var saved: [SavedLibrary] = []
+    /// Ghost libraries open right now. In memory only; see `GhostStorage`.
+    var ghosts: [SavedLibrary] = []
     var currentPath: String?
     private(set) var library: Library?
     private(set) var items: [BrowseItem] = []
@@ -111,6 +118,11 @@ final class LibraryModel {
     private static let currentKey = "currentLibrary"
 
     init() {
+        // A crashed session may have left ghost data behind: nothing is open yet, so remove it all.
+        GhostStorage.purgeAll()
+        observers.append(NotificationCenter.default.addObserver(forName: NSApplication.willTerminateNotification, object: nil, queue: .main) { [weak self] _ in
+            MainActor.assumeIsolated { self?.closeAllGhosts() }
+        })
         if let data = UserDefaults.standard.data(forKey: Self.savedKey),
            let list = try? JSONDecoder().decode([SavedLibrary].self, from: data) {
             saved = list
@@ -123,13 +135,16 @@ final class LibraryModel {
         }
         let args = CommandLine.arguments
         if let i = args.firstIndex(of: "--open"), i + 1 < args.count {
-            open(URL(fileURLWithPath: args[i + 1]))
+            open(URL(fileURLWithPath: args[i + 1]), ghost: args.contains("--ghost"))
         } else if let path = UserDefaults.standard.string(forKey: Self.currentKey), saved.contains(where: { $0.path == path }) {
             select(path: path)
         }
     }
 
-    var currentLibraryName: String { saved.first(where: { $0.path == currentPath })?.name ?? "Blazebunny" }
+    var allLibraries: [SavedLibrary] { saved + ghosts }
+    var currentLibrary: SavedLibrary? { allLibraries.first { $0.path == currentPath } }
+    var currentLibraryName: String { currentLibrary?.name ?? "Blazebunny" }
+    var currentIsGhost: Bool { currentLibrary?.isGhost ?? false }
 
     /// Title of what the grid shows.
     var viewTitle: String {
@@ -142,20 +157,39 @@ final class LibraryModel {
 
     // MARK: - Libraries
 
-    func openFolderPanel() {
+    /// Asks for a folder. `ghost` sets the checkbox's starting state; the user can flip it.
+    func openFolderPanel(ghost: Bool = false) {
         let panel = NSOpenPanel()
         panel.canChooseDirectories = true
         panel.canChooseFiles = false
         panel.allowsMultipleSelection = false
         panel.prompt = "Open"
         panel.message = "Choose a folder of images. Blazebunny only reads it."
+        let box = NSButton(checkboxWithTitle: "Open as ghost: keep nothing after I close it", target: nil, action: nil)
+        box.state = ghost ? .on : .off
+        box.toolTip = "Index and thumbnails go to a temporary folder and are deleted when you close the ghost or quit. Use it for private or accounting folders."
+        let accessory = NSView(frame: NSRect(x: 0, y: 0, width: 420, height: 36))
+        box.frame = NSRect(x: 12, y: 8, width: 396, height: 20)
+        accessory.addSubview(box)
+        panel.accessoryView = accessory
+        panel.isAccessoryViewDisclosed = true
         guard panel.runModal() == .OK, let url = panel.url else { return }
-        open(url)
+        open(url, ghost: box.state == .on)
     }
 
-    func open(_ url: URL) {
+    func open(_ url: URL, ghost: Bool = false) {
         let path = url.standardizedFileURL.path
-        if !saved.contains(where: { $0.path == path }) {
+        if allLibraries.contains(where: { $0.path == path }) {
+            select(path: path)  // already open, as a library or as a ghost
+            return
+        }
+        if ghost {
+            guard let base = try? GhostStorage.makeBase() else {
+                errorMessage = "Could not create temporary storage for a ghost folder."
+                return
+            }
+            ghosts.append(SavedLibrary(path: path, bookmark: nil, ghostBase: base))
+        } else {
             let bookmark = try? url.bookmarkData(options: [], includingResourceValuesForKeys: nil, relativeTo: nil)
             saved.append(SavedLibrary(path: path, bookmark: bookmark))
             persist()
@@ -163,12 +197,42 @@ final class LibraryModel {
         select(path: path)
     }
 
+    /// Closes a ghost and deletes everything it stored.
+    func closeGhost(_ lib: SavedLibrary) {
+        guard let i = ghosts.firstIndex(where: { $0.path == lib.path }) else { return }
+        if currentPath == lib.path { dropCurrentLibrary() }
+        if let base = ghosts[i].ghostBase { GhostStorage.purge(base) }
+        ghosts.remove(at: i)
+    }
+
+    func closeAllGhosts() {
+        for g in ghosts { closeGhost(g) }
+        GhostStorage.purgeAll()
+    }
+
+    /// Stops the scan and releases the open library, so its files can be deleted.
+    private func dropCurrentLibrary() {
+        stopScan()
+        thumbnails.library = nil
+        library = nil
+        currentPath = nil
+        items = []
+        detail = nil
+        selection = []
+        savedSearches = []
+        sidebarSelection = nil
+    }
+
     /// Gives a library a display name; an empty name goes back to the folder name.
     func rename(_ lib: SavedLibrary, to newName: String) {
-        guard let i = saved.firstIndex(where: { $0.path == lib.path }) else { return }
         let trimmed = newName.trimmingCharacters(in: .whitespacesAndNewlines)
-        saved[i].displayName = (trimmed.isEmpty || trimmed == saved[i].folderName) ? nil : trimmed
-        persist()
+        let name = (trimmed.isEmpty || trimmed == lib.folderName) ? nil : trimmed
+        if let i = saved.firstIndex(where: { $0.path == lib.path }) {
+            saved[i].displayName = name
+            persist()
+        } else if let i = ghosts.firstIndex(where: { $0.path == lib.path }) {
+            ghosts[i].displayName = name
+        }
     }
 
     func remove(_ lib: SavedLibrary) {
@@ -193,7 +257,8 @@ final class LibraryModel {
         stopScan()
         currentPath = path
         sidebarSelection = .library(path)
-        UserDefaults.standard.set(path, forKey: Self.currentKey)
+        // A ghost is never remembered, not even as "the library to reopen".
+        if currentLibrary?.isGhost != true { UserDefaults.standard.set(path, forKey: Self.currentKey) }
         selection = []
         detail = nil
         items = []
@@ -201,7 +266,12 @@ final class LibraryModel {
         errorMessage = nil
         query = SearchQuery()
         do {
-            let lib = try Library(root: resolvedURL(for: path))
+            let lib: Library
+            if let base = currentLibrary?.ghostBase {
+                lib = try Library(root: URL(fileURLWithPath: path), base: base)
+            } else {
+                lib = try Library(root: resolvedURL(for: path))
+            }
             library = lib
             thumbnails.library = lib
             savedSearches = (try? lib.index.savedSearches()) ?? []

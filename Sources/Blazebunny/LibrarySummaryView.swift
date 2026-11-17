@@ -11,7 +11,7 @@ struct LibrarySummaryView: View {
         if case .library = model.sidebarSelection { return true }
         return false
     }
-    private var folderPath: String? { model.saved.first { $0.path == model.currentPath }?.path }
+    private var folderPath: String? { model.currentLibrary?.path }
 
     var body: some View {
         ScrollView {
@@ -28,6 +28,9 @@ struct LibrarySummaryView: View {
 
     var hero: some View {
         VStack(alignment: .leading, spacing: DS.Space.xs) {
+            if model.currentIsGhost {
+                GhostBadge().padding(.bottom, DS.Space.s)
+            }
             Text(model.viewTitle)
                 .dsFont(12)
                 .foregroundStyle(.secondary)
@@ -69,7 +72,10 @@ struct LibrarySummaryView: View {
             InfoRow(label: "Size") { Text(ByteCountFormatter.string(fromByteCount: s.totalBytes, countStyle: .file)).dsFont(12, .number) }
             if let range = dateRange { InfoRow(label: "Dates") { Text(range).dsFont(12, .number) } }
             InfoRow(label: "With prompt") { Text(s.withPrompt.formatted()).dsFont(12, .number) }
-            if isWholeLibrary, let created = model.libraryCreatedAt {
+            if model.currentIsGhost {
+                InfoRow(label: "Ghost") { Text("Deleted when closed").foregroundStyle(DS.Tint.ghost) }
+            }
+            if isWholeLibrary, !model.currentIsGhost, let created = model.libraryCreatedAt {
                 InfoRow(label: "Added") { Text(created.formatted(date: .abbreviated, time: .omitted)).dsFont(12, .number) }
             }
             if isWholeLibrary, let path = folderPath {

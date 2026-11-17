@@ -44,11 +44,19 @@ committed), `[ ]` to do. Design context and the proposed order live in
 
 ## M4: ghost (temporary) folders
 
-- [ ] When adding a folder, choose "Add as ghost / temporary".
-- [ ] A ghost leaves no thumbnails, index or other data behind once finished (purge on
-      close, on quit, and orphans on next launch); stored only in a temporary location.
-- [ ] Not remembered across launches; clearly marked in the sidebar.
-- [ ] Purpose: exploring folders full of accounting or private documents.
+- [x] When adding a folder, choose "Open as ghost" (checkbox in the Open panel; ghost button
+      at the bottom of the sidebar; File > Open Ghost Folder… ⇧⌘O).
+- [x] A ghost leaves no thumbnails, index or other data behind: stored only in a private
+      temporary directory (mode 0700), deleted on Close Ghost, on quit, and orphans of a
+      crash are removed at the next launch. `GhostStorage` in Core, tested (4 tests).
+- [x] Not remembered across launches (not in saved libraries, not as the library to reopen).
+- [x] Very visible: amber line-ghost icon, dashed outline around the whole content area,
+      dashed row in a "Ghosts · leave no trace" sidebar section, badge and
+      "Deleted when closed" in the summary.
+- [x] Verified live: data only under the temp dir while open; none after Close Ghost, after
+      quit, or after a kill -9 plus relaunch; real library folder unchanged.
+- [ ] Known limit: macOS itself remembers the last folder shown by the Open panel; that is
+      system state we cannot control.
 
 ## M5: folder trees
 

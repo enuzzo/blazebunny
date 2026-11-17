@@ -25,6 +25,10 @@ struct BlazebunnyApp: App {
             CommandGroup(replacing: .newItem) {
                 Button("Open Folder…") { model.openFolderPanel() }
                     .keyboardShortcut("o")
+                Button("Open Ghost Folder…") { model.openFolderPanel(ghost: true) }
+                    .keyboardShortcut("o", modifiers: [.command, .shift])
+                Button("Close Ghost") { if let g = model.currentLibrary, g.isGhost { model.closeGhost(g) } }
+                    .disabled(!model.currentIsGhost)
             }
             CommandMenu("Library") {
                 Button("Rescan") { model.rescan() }
@@ -87,7 +91,7 @@ struct ContentView: View {
                 } else {
                     // One row: what you are looking at, then how to narrow it.
                     HStack(spacing: 0) {
-                        PageHeader(title: model.viewTitle, subtitle: subtitle)
+                        PageHeader(title: model.viewTitle, subtitle: subtitle, isGhost: model.currentIsGhost)
                             .padding(.leading, DS.Space.l)
                         FilterRow(model: model)
                     }
@@ -109,6 +113,7 @@ struct ContentView: View {
                 }
                 StatusBar(model: model)
             }
+            .ghostOutline(model.currentIsGhost)
             .inspector(isPresented: $showInspector) {
                 InspectorView(model: model)
                     .id(model.detail?.id)
@@ -186,9 +191,11 @@ struct ContentView: View {
 struct PageHeader: View {
     let title: String
     let subtitle: String
+    var isGhost = false
 
     var body: some View {
         HStack(alignment: .firstTextBaseline, spacing: DS.Space.s) {
+            if isGhost { GhostIcon(size: 22).alignmentGuide(.firstTextBaseline) { $0[.bottom] - 3 } }
             Text(title)
                 .dsFont(24, weight: .light)
                 .lineLimit(1)
@@ -201,7 +208,7 @@ struct PageHeader: View {
                     .fixedSize()
             }
         }
-        .frame(maxWidth: 340, alignment: .leading)
+        .frame(maxWidth: 380, alignment: .leading)
         .fixedSize(horizontal: true, vertical: false)
         .animation(DS.Motion.view, value: title)
     }

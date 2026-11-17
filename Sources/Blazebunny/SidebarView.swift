@@ -28,6 +28,28 @@ struct SidebarView: View {
                         }
                 }
             }
+            if !model.ghosts.isEmpty {
+                Section {
+                    ForEach(model.ghosts) { lib in
+                        libraryRow(lib)
+                            .badge(lib.path == model.currentPath && model.counts.total > 0 ? Text(model.counts.total.formatted()) : nil)
+                            .tag(SidebarItem.library(lib.path))
+                            .help("Ghost: \(lib.path)\nNothing is kept after you close it.")
+                            .contextMenu {
+                                Button("Rename…") { beginRename(lib) }
+                                Divider()
+                                Button("Close Ghost and Delete Its Data", role: .destructive) { model.closeGhost(lib) }
+                            }
+                    }
+                } header: {
+                    Label {
+                        Text("Ghosts · leave no trace")
+                    } icon: {
+                        GhostIcon(size: 14)
+                    }
+                    .foregroundStyle(DS.Tint.ghost)
+                }
+            }
             if model.library != nil {
                 Section(model.currentLibraryName) {
                     ForEach(BuiltInView.allCases.filter { $0 != .all }) { v in
@@ -57,10 +79,16 @@ struct SidebarView: View {
             }
         }
         .safeAreaInset(edge: .bottom) {
-            Button { model.openFolderPanel() } label: { Label("Open Folder…", systemImage: "plus") }
-                .buttonStyle(.borderless)
-                .padding(12)
-                .frame(maxWidth: .infinity, alignment: .leading)
+            HStack {
+                Button { model.openFolderPanel() } label: { Label("Open Folder…", systemImage: "plus") }
+                    .buttonStyle(.borderless)
+                Spacer()
+                Button { model.openFolderPanel(ghost: true) } label: { GhostIcon(size: 18) }
+                    .buttonStyle(.borderless)
+                    .help("Open a Ghost Folder… (⇧⌘O): keeps nothing after you close it")
+            }
+            .padding(12)
+            .frame(maxWidth: .infinity, alignment: .leading)
         }
         .sheet(item: $editing) { s in SaveSearchSheet(model: model, existing: s) }
     }
@@ -80,8 +108,20 @@ struct SidebarView: View {
                 Image(systemName: "photo.stack")
             }
         } else {
-            Label(lib.name, systemImage: "photo.stack")
-                .onTapGesture(count: 2) { beginRename(lib) }
+            Label {
+                Text(lib.name)
+            } icon: {
+                if lib.isGhost { GhostIcon(size: 16) } else { Image(systemName: "photo.stack") }
+            }
+            .padding(.vertical, lib.isGhost ? 2 : 0)
+            .padding(.horizontal, lib.isGhost ? 4 : 0)
+            .overlay {
+                if lib.isGhost {
+                    RoundedRectangle(cornerRadius: 7, style: .continuous)
+                        .strokeBorder(DS.Tint.ghost.opacity(0.7), style: StrokeStyle(lineWidth: 1, dash: [4, 3]))
+                }
+            }
+            .onTapGesture(count: 2) { beginRename(lib) }
         }
     }
 

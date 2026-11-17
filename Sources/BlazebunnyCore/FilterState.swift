@@ -57,6 +57,21 @@ public struct FacetValue: Hashable, Sendable {
     public var count: Int
 }
 
+/// What a library, view or saved search holds, at a glance.
+public struct LibrarySummary: Equatable, Sendable {
+    public var total = 0
+    public var totalBytes: Int64 = 0
+    public var withPrompt = 0
+    /// Embedded or file dates of the oldest and newest item.
+    public var oldest: Date?
+    public var newest: Date?
+    /// Items per file kind ("png", "jpeg"…), most common first.
+    public var kinds: [FacetValue] = []
+    /// Items per detected source, most common first.
+    public var sources: [FacetValue] = []
+    public init() {}
+}
+
 public struct MonthCount: Hashable, Sendable {
     /// "2025-03"
     public var month: String

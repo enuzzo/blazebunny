@@ -1,0 +1,17 @@
+Blazebunny bundles the following free resources. They are resources (fonts), not code
+dependencies. Each is used under its own licence; the full licence texts are in
+Resources/Fonts/ and are copied into the app bundle next to the fonts.
+
+Space Grotesk (SpaceGrotesk[wght].ttf)
+  Copyright 2020 The Space Grotesk Project Authors
+  https://github.com/floriankarsten/space-grotesk
+  SIL Open Font License 1.1 (Resources/Fonts/OFL-SpaceGrotesk.txt)
+
+Space Mono (SpaceMono-Regular.ttf, SpaceMono-Bold.ttf)
+  Copyright 2016 The Space Mono Project Authors
+  https://github.com/googlefonts/spacemono
+  SIL Open Font License 1.1 (Resources/Fonts/OFL-SpaceMono.txt)
+
+Source of both: the Google Fonts repository (https://github.com/google/fonts, ofl/).
+The fonts are unmodified. Any icon set added later (for example Lucide, ISC licence)
+must be listed here with its licence before it is committed.

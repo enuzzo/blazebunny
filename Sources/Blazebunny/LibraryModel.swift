@@ -6,8 +6,11 @@ import Observation
 struct SavedLibrary: Codable, Hashable, Identifiable {
     var path: String
     var bookmark: Data?
+    /// A name the user chose. Display only: the folder itself is never renamed.
+    var displayName: String?
     var id: String { path }
-    var name: String { (path as NSString).lastPathComponent }
+    var folderName: String { (path as NSString).lastPathComponent }
+    var name: String { displayName ?? folderName }
 }
 
 /// Built-in views every library offers in the sidebar.
@@ -85,6 +88,9 @@ final class LibraryModel {
     private(set) var detail: ItemDetail?
     private(set) var progress: ScanProgress?
     private(set) var counts = LibraryIndex.Counts()
+    /// What the current view holds (the whole library when no filter is on).
+    private(set) var summary = LibrarySummary()
+    private(set) var libraryCreatedAt: Date?
     /// Item count per source for the current query, ignoring the source filter.
     private(set) var sourceCounts: [ItemSource: Int] = [:]
     private(set) var isOnline = false
@@ -155,6 +161,14 @@ final class LibraryModel {
             persist()
         }
         select(path: path)
+    }
+
+    /// Gives a library a display name; an empty name goes back to the folder name.
+    func rename(_ lib: SavedLibrary, to newName: String) {
+        guard let i = saved.firstIndex(where: { $0.path == lib.path }) else { return }
+        let trimmed = newName.trimmingCharacters(in: .whitespacesAndNewlines)
+        saved[i].displayName = (trimmed.isEmpty || trimmed == saved[i].folderName) ? nil : trimmed
+        persist()
     }
 
     func remove(_ lib: SavedLibrary) {
@@ -432,7 +446,8 @@ final class LibraryModel {
             lastProgressReload = Date()
             scheduleReload(delay: 0)
         }
-        if p.phase == .thumbnails || p.phase == .done { thumbnails.retryMissing() }
+        // Thumbnails are made alongside metadata, so retry as soon as any exist.
+        if p.thumbnailsDone > 0 || p.phase == .done { thumbnails.retryMissing() }
     }
 
     // MARK: - Grid data
@@ -444,15 +459,19 @@ final class LibraryModel {
         reloadTask = Task { [weak self] in
             if delay > 0 { try? await Task.sleep(for: .seconds(delay)) }
             if Task.isCancelled { return }
-            let result = await Task.detached(priority: .userInitiated) { () -> ([BrowseItem], LibraryIndex.Counts, [FacetValue])? in
+            let result = await Task.detached(priority: .userInitiated) { () -> ([BrowseItem], LibraryIndex.Counts, [FacetValue], LibrarySummary, Date?)? in
                 guard let items = try? lib.index.items(filter: q.filter, search: q.text, sort: q.sort),
                       let counts = try? lib.index.counts() else { return nil }
                 let sources = (try? lib.index.facetCounts(.source, filter: q.filter, search: q.text)) ?? []
-                return (items, counts, sources)
+                let summary = (try? lib.index.summary(filter: q.filter, search: q.text)) ?? LibrarySummary()
+                let created = try? lib.index.createdAt()
+                return (items, counts, sources, summary, created ?? nil)
             }.value
-            guard !Task.isCancelled, let self, let (items, counts, sources) = result, self.library === lib else { return }
+            guard !Task.isCancelled, let self, let (items, counts, sources, summary, created) = result, self.library === lib else { return }
             if items != self.items { self.items = items }
             self.counts = counts
+            if summary != self.summary { self.summary = summary }
+            self.libraryCreatedAt = created
             self.sourceCounts = Dictionary(uniqueKeysWithValues: sources.compactMap { v in ItemSource(rawValue: v.value).map { ($0, v.count) } })
         }
     }

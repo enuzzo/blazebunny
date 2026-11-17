@@ -7,10 +7,17 @@ struct BlazebunnyApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) var appDelegate
     @State private var model = LibraryModel()
 
+    init() {
+        Typeface.registerBundled()
+    }
+
     var body: some Scene {
         Window("Blazebunny", id: "main") {
             ContentView(model: model)
                 .frame(minWidth: 1000, minHeight: 600)
+        }
+        Settings {
+            PreferencesView()
         }
         .defaultSize(width: 1440, height: 900)
         .windowToolbarStyle(.unified)
@@ -54,8 +61,16 @@ struct ContentView: View {
     @Bindable var model: LibraryModel
     @State private var showInspector = true
     @State private var showSave = false
+    @AppStorage(Typeface.defaultsKey) private var useBrandTypeface = true
 
     var body: some View {
+        // The font modifier reads the environment, so it sits inside `.environment`.
+        content
+            .dsFont(13)
+            .environment(\.brandTypeface, useBrandTypeface && Typeface.isAvailable)
+    }
+
+    var content: some View {
         NavigationSplitView {
             SidebarView(model: model)
                 .navigationSplitViewColumnWidth(min: 200, ideal: 232, max: 320)
@@ -70,8 +85,14 @@ struct ContentView: View {
                         Button("Open Folder…") { model.openFolderPanel() }.keyboardShortcut("o")
                     }
                 } else {
-                    FilterRow(model: model)
-                    Divider()
+                    // One row: what you are looking at, then how to narrow it.
+                    HStack(spacing: 0) {
+                        PageHeader(title: model.viewTitle, subtitle: subtitle)
+                            .padding(.leading, DS.Space.l)
+                        FilterRow(model: model)
+                    }
+                    .frame(height: DS.Size.headerRow)
+                    Divider().overlay(DS.Palette.hairline)
                     if model.items.isEmpty && (model.counts.total > 0) {
                         ContentUnavailableView {
                             Label("No Matches", systemImage: "line.3.horizontal.decrease.circle")
@@ -95,7 +116,9 @@ struct ContentView: View {
             }
         }
         .navigationTitle(model.viewTitle)
-        .navigationSubtitle(subtitle)
+        .toolbar(removing: .title)
+        .background { WindowBackdrop() }
+        .preferredColorScheme(.dark)
         .searchable(text: $model.query.text, placement: .toolbar, prompt: "Search prompts and names")
         .toolbar {
             ToolbarItemGroup {
@@ -158,6 +181,32 @@ struct ContentView: View {
     }
 }
 
+/// Large, light page title above the filters. The window title stays set for
+/// accessibility and Mission Control; only its toolbar rendering is removed.
+struct PageHeader: View {
+    let title: String
+    let subtitle: String
+
+    var body: some View {
+        HStack(alignment: .firstTextBaseline, spacing: DS.Space.s) {
+            Text(title)
+                .dsFont(24, weight: .light)
+                .lineLimit(1)
+                .truncationMode(.middle)
+            if !subtitle.isEmpty {
+                Text(subtitle)
+                    .dsFont(12, .number)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+                    .fixedSize()
+            }
+        }
+        .frame(maxWidth: 340, alignment: .leading)
+        .fixedSize(horizontal: true, vertical: false)
+        .animation(DS.Motion.view, value: title)
+    }
+}
+
 struct StatusBar: View {
     let model: LibraryModel
 
@@ -175,7 +224,7 @@ struct StatusBar: View {
                 }
             }
         }
-        .font(.caption)
+        .dsFont(12, .number)
         .foregroundStyle(.secondary)
         .padding(.horizontal, DS.Space.l)
         .frame(height: DS.Size.statusBar)
@@ -190,7 +239,8 @@ struct StatusBar: View {
     func phaseText(_ p: ScanProgress) -> String {
         switch p.phase {
         case .enumerating: return "Listing files… \(p.total.formatted())"
-        case .metadata: return "Reading metadata \(p.metadataDone.formatted()) / \(p.total.formatted())"
+        case .metadata:
+            return "Reading metadata \(p.metadataDone.formatted()) / \(p.total.formatted()) · Thumbnails \(p.thumbnailsDone.formatted())"
         case .thumbnails:
             let mbps = p.elapsed > 0 ? Double(p.bytesRead) / 1e6 / p.elapsed : 0
             return "Thumbnails \(p.thumbnailsDone.formatted()) / \(p.total.formatted()) · \(String(format: "%.1f", mbps)) MB/s"

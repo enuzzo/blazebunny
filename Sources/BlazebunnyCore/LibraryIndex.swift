@@ -75,9 +75,15 @@ public final class LibraryIndex: @unchecked Sendable {
     private let lock = NSLock()
 
     public init(url: URL) throws {
+        // An index file that predates the creation-date key tells us when the
+        // library was first opened; a new file is created now.
+        let existingDate = FileManager.default.fileExists(atPath: url.path)
+            ? (try? url.resourceValues(forKeys: [.creationDateKey]).creationDate) : nil
         db = try SQLiteDB(path: url.path)
         try db.exec("PRAGMA journal_mode=WAL; PRAGMA synchronous=NORMAL; PRAGMA foreign_keys=ON;")
         try migrate()
+        try db.run("INSERT OR IGNORE INTO library(key, value) VALUES('created_at', ?)",
+                   [String((existingDate ?? Date()).timeIntervalSince1970)])
     }
 
     private func sync<T>(_ body: () throws -> T) rethrows -> T {
@@ -163,6 +169,43 @@ public final class LibraryIndex: @unchecked Sendable {
             var v: String?
             try db.query("SELECT value FROM library WHERE key = ?", [key]) { v = $0.string(0) }
             return v
+        }
+    }
+
+    /// When this library was first opened on this Mac.
+    public func createdAt() throws -> Date? {
+        try value(forKey: "created_at").flatMap(Double.init).map { Date(timeIntervalSince1970: $0) }
+    }
+
+    // MARK: - Summary
+
+    /// Totals for the items a filter and search would show.
+    public func summary(filter: FilterState = FilterState(), search: String? = nil) throws -> LibrarySummary {
+        try sync {
+            let (w, args) = Self.whereClause(filter, search: search)
+            var s = LibrarySummary()
+            try db.query("""
+            SELECT count(*), coalesce(sum(file_size), 0), min(\(Self.dateExpr)), max(\(Self.dateExpr)),
+                   coalesce(sum(prompt_raw IS NOT NULL AND prompt_raw != ''), 0)
+            FROM items WHERE \(w)
+            """, args) { r in
+                s.total = Int(r.int(0))
+                s.totalBytes = r.int(1)
+                s.oldest = r.double(2).map { Date(timeIntervalSince1970: $0) }
+                s.newest = r.double(3).map { Date(timeIntervalSince1970: $0) }
+                s.withPrompt = Int(r.int(4))
+            }
+            func group(_ column: String) throws -> [FacetValue] {
+                var out: [FacetValue] = []
+                try db.query("""
+                SELECT \(column), count(*) AS n FROM items WHERE \(w) AND \(column) IS NOT NULL
+                GROUP BY \(column) ORDER BY n DESC
+                """, args) { r in out.append(FacetValue(value: r.string(0) ?? "", count: Int(r.int(1)))) }
+                return out
+            }
+            s.kinds = try group("items.kind")
+            s.sources = try group("items.source")
+            return s
         }
     }
 

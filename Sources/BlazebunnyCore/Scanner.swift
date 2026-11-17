@@ -80,52 +80,72 @@ public final class FolderScanner: @unchecked Sendable {
         p.phase = .metadata
         report()
 
-        // Phase 2: metadata, in enumeration order (close to on-disk order).
+        // Phases 2 and 3 alternate in time slices, so thumbnails (visible items
+        // first) appear while metadata is still being read. Each round reads one
+        // batch of metadata, then makes thumbnails for about as long again.
+        // Metadata runs in enumeration order (close to on-disk order).
         while !isCancelled {
-            let pending = try index.pendingMetadata(limit: 64)
-            if pending.isEmpty { break }
-            let results = await mapConcurrently(pending) { item in
-                (item.id, self.readMetadata(item))
-            }
-            try index.saveMetadata(results)
-            p.metadataDone += results.count
-            report()
-        }
-        if isCancelled { return }
+            let roundStart = Date()
+            var didWork = false
 
-        // Phase 3: thumbnails, visible items first.
-        if let thumbnails {
-            p.phase = .thumbnails
-            report()
-            while !isCancelled {
-                let wanted = lock.withLock { () -> [Int64] in
-                    let w = priority
-                    priority = []
-                    return w
+            let pendingMeta = try index.pendingMetadata(limit: 64)
+            if !pendingMeta.isEmpty {
+                didWork = true
+                p.phase = .metadata
+                let results = await mapConcurrently(pendingMeta) { item in
+                    (item.id, self.readMetadata(item))
                 }
-                var pending = try index.pendingThumbnails(ids: wanted)
-                if pending.isEmpty { pending = try index.pendingThumbnails(limit: ioConcurrency * 4) }
-                if pending.isEmpty { break }
-                let results = await mapConcurrently(pending) { item -> (Int64, ThumbnailLocation?) in
-                    let url = self.root.appendingPathComponent(item.relPath)
-                    do {
-                        let data = try await ThumbnailMaker.make(from: url, kind: item.kind)
-                        self.addBytes(url)
-                        return (item.id, try thumbnails.append(data))
-                    } catch {
-                        return (item.id, nil)
-                    }
-                }
-                for (id, loc) in results { try index.saveThumbnail(id: id, loc) }
-                p.thumbnailsDone += results.count
+                try index.saveMetadata(results)
+                p.metadataDone += results.count
                 report()
             }
+            if isCancelled { return }
+
+            if let thumbnails {
+                let budget = pendingMeta.isEmpty ? 0 : max(0.25, Date().timeIntervalSince(roundStart))
+                let sliceStart = Date()
+                repeat {
+                    let made = try await makeThumbnailBatch(thumbnails)
+                    if made == 0 { break }
+                    didWork = true
+                    if pendingMeta.isEmpty { p.phase = .thumbnails }
+                    p.thumbnailsDone += made
+                    report()
+                } while !isCancelled && Date().timeIntervalSince(sliceStart) < budget
+            }
+            if !didWork { break }
         }
+        if isCancelled { return }
         counts = try index.counts()
         p.metadataDone = counts.metadataDone + counts.metadataFailed
         p.thumbnailsDone = counts.thumbnailsDone + counts.thumbnailsFailed
         p.phase = isCancelled ? p.phase : .done
         report()
+    }
+
+    /// Makes one batch of thumbnails, the prioritised (visible) items first.
+    /// Returns how many were processed; 0 means nothing is left.
+    private func makeThumbnailBatch(_ thumbnails: ThumbnailStore) async throws -> Int {
+        let wanted = lock.withLock { () -> [Int64] in
+            let w = priority
+            priority = []
+            return w
+        }
+        var pending = try index.pendingThumbnails(ids: wanted)
+        if pending.isEmpty { pending = try index.pendingThumbnails(limit: ioConcurrency * 4) }
+        if pending.isEmpty { return 0 }
+        let results = await mapConcurrently(pending) { item -> (Int64, ThumbnailLocation?) in
+            let url = self.root.appendingPathComponent(item.relPath)
+            do {
+                let data = try await ThumbnailMaker.make(from: url, kind: item.kind)
+                self.addBytes(url)
+                return (item.id, try thumbnails.append(data))
+            } catch {
+                return (item.id, nil)
+            }
+        }
+        for (id, loc) in results { try index.saveThumbnail(id: id, loc) }
+        return results.count
     }
 
     func readMetadata(_ item: PendingItem) -> ItemMetadata? {

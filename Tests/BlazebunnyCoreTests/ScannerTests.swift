@@ -3,6 +3,14 @@ import CryptoKit
 import Testing
 @testable import BlazebunnyCore
 
+/// Minimal thread-safe box for collecting values from `@Sendable` callbacks.
+final class Locked<Value>: @unchecked Sendable {
+    private var value: Value
+    private let lock = NSLock()
+    init(_ value: Value) { self.value = value }
+    func withLock<R>(_ body: (inout Value) -> R) -> R { lock.withLock { body(&value) } }
+}
+
 struct ScannerTests {
     struct Fixture {
         let folder: URL
@@ -64,6 +72,24 @@ struct ScannerTests {
 
         #expect(try snapshot(f.folder) == before)
         #expect(!lib.directory.path.hasPrefix(f.folder.path))
+    }
+
+    @Test func thumbnailsStartWhileMetadataIsStillBeingRead() async throws {
+        let base = FileManager.default.temporaryDirectory.appendingPathComponent("bb-" + UUID().uuidString)
+        let folder = base.appendingPathComponent("images")
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        for i in 0..<200 {
+            try PNGFixture.plainPNG(width: 40, height: 40).write(to: folder.appendingPathComponent("p\(i).png"))
+        }
+        let lib = try Library(root: folder, base: base.appendingPathComponent("libs"))
+        let scanner = FolderScanner(root: folder, index: lib.index, thumbnails: lib.thumbnails)
+        let seen = Locked<[ScanProgress]>([])
+        try await scanner.run { p in seen.withLock { $0.append(p) } }
+
+        let early = seen.withLock { $0 }.first { $0.phase == .metadata && $0.thumbnailsDone > 0 && $0.metadataDone < $0.total }
+        #expect(early != nil, "thumbnails should appear before every file's metadata has been read")
+        let c = try lib.index.counts()
+        #expect(c.metadataDone == 200 && c.thumbnailsDone == 200)
     }
 
     @Test func rescanSkipsUnchangedAndDropsRemoved() async throws {

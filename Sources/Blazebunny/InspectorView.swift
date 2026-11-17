@@ -33,6 +33,8 @@ struct InspectorView: View {
                 .padding(DS.Space.l)
                 .frame(maxWidth: .infinity, alignment: .leading)
             }
+        } else if model.library != nil {
+            LibrarySummaryView(model: model)
         } else {
             ContentUnavailableView("No Selection", systemImage: "photo.on.rectangle",
                                    description: Text("Select an image to see its details."))
@@ -68,7 +70,7 @@ struct InspectorView: View {
     func promptSection(_ m: ItemMetadata, _ text: String) -> some View {
         VStack(alignment: .leading, spacing: 12) {
             Text(text)
-                .font(.system(size: 15))
+                .dsFont(15)
                 .lineSpacing(3)
                 .textSelection(.enabled)
                 .fixedSize(horizontal: false, vertical: true)
@@ -229,7 +231,7 @@ struct InfoRow<Value: View>: View {
             HStack(spacing: 6) { value }
             Spacer(minLength: 0)
         }
-        .font(.callout)
+        .dsFont(12)
         .frame(minHeight: DS.Size.control)
         .overlay(alignment: .bottom) { Divider() }
     }

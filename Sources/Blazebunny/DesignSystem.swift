@@ -10,7 +10,9 @@ import SwiftUI
 /// - Filter row: only `PillStyle` controls, all 28 pt high.
 /// - Inspector: one prominent action (Copy Prompt), every other button bordered,
 ///   all at the regular control size.
-/// - Content (grid, inspector, filter row) never uses glass.
+/// - Glass is allowed on chrome and containers (sidebar, inspector panel,
+///   collection cards, popovers) through shared styles in this file, and never
+///   over the image grid: thumbnails stay sharp and uncovered.
 enum DS {
     enum Space {
         static let xs: CGFloat = 4
@@ -25,7 +27,9 @@ enum DS {
         static let control: CGFloat = 28
         /// Height of the filter row.
         static let filterRow: CGFloat = 44
-        static let statusBar: CGFloat = 28
+        /// Title, count and filter pills share this one row.
+        static let headerRow: CGFloat = 52
+        static let statusBar: CGFloat = 32
         static let inspectorLabel: CGFloat = 92
     }
 
@@ -33,6 +37,7 @@ enum DS {
         static let small: CGFloat = 4
         static let medium: CGFloat = 6
         static let cell: CGFloat = 8
+        static let panel: CGFloat = 16
     }
 
     /// Tints by meaning, never by decoration.
@@ -40,6 +45,73 @@ enum DS {
         static let midjourney = Color.indigo
         static let stableDiffusion = Color.green
         static let camera = Color.teal
+    }
+}
+
+// MARK: - Dark glass language
+
+extension DS {
+    /// Near-black surfaces and hairlines. The app is dark-only.
+    enum Palette {
+        static let window = Color(red: 0.047, green: 0.051, blue: 0.059)
+        static let glow = Color(red: 0.30, green: 0.34, blue: 0.45)
+        static let hairline = Color.white.opacity(0.09)
+        static let glassFill = Color.white.opacity(0.045)
+        static let glassFillSolid = Color(red: 0.094, green: 0.098, blue: 0.110)
+    }
+
+    enum Motion {
+        /// View changes: short, never during fast scroll.
+        static let view = Animation.easeOut(duration: 0.3)
+    }
+}
+
+/// Near-black window with one slow, soft light in the upper left. Static when
+/// Reduce Motion is on; the light only drifts a few points either way.
+struct WindowBackdrop: View {
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    var body: some View {
+        ZStack {
+            DS.Palette.window
+            TimelineView(.animation(minimumInterval: 1.0 / 20, paused: reduceMotion)) { ctx in
+                let t = reduceMotion ? 0 : ctx.date.timeIntervalSinceReferenceDate
+                RadialGradient(
+                    colors: [DS.Palette.glow.opacity(0.22), .clear],
+                    center: UnitPoint(x: 0.12 + 0.03 * sin(t / 9), y: 0.05 + 0.03 * cos(t / 11)),
+                    startRadius: 0, endRadius: 720
+                )
+            }
+        }
+        .ignoresSafeArea()
+    }
+}
+
+/// Frosted-glass container: sidebar, inspector panel, collection cards,
+/// popovers. Never used over the image grid. With Reduce Transparency it falls
+/// back to a solid fill.
+struct GlassPanel: ViewModifier {
+    var radius: CGFloat = DS.Radius.panel
+    @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
+
+    func body(content: Content) -> some View {
+        let shape = RoundedRectangle(cornerRadius: radius, style: .continuous)
+        content
+            .background {
+                if reduceTransparency {
+                    shape.fill(DS.Palette.glassFillSolid)
+                } else {
+                    shape.fill(.ultraThinMaterial).overlay(shape.fill(DS.Palette.glassFill))
+                }
+            }
+            .overlay { shape.strokeBorder(DS.Palette.hairline) }
+            .clipShape(shape)
+    }
+}
+
+extension View {
+    func glassPanel(radius: CGFloat = DS.Radius.panel) -> some View {
+        modifier(GlassPanel(radius: radius))
     }
 }
 
@@ -51,7 +123,7 @@ struct PillStyle: ButtonStyle {
 
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
-            .font(.callout)
+            .dsFont(12)
             .foregroundStyle(isOn ? tint : .primary)
             .padding(.horizontal, DS.Space.m - 2)
             .frame(height: DS.Size.control)

@@ -284,7 +284,7 @@ final class MonthHeader: NSView, NSCollectionViewElement {
     func set(title t: String, count n: Int?) {
         title.stringValue = t
         count.stringValue = n.map { $0.formatted() } ?? ""
-        layer?.backgroundColor = t.isEmpty ? nil : NSColor.windowBackgroundColor.withAlphaComponent(0.92).cgColor
+        layer?.backgroundColor = t.isEmpty ? nil : NSColor(red: 0.047, green: 0.051, blue: 0.059, alpha: 0.88).cgColor
     }
 }
 

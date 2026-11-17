@@ -299,8 +299,9 @@ public final class LibraryIndex: @unchecked Sendable {
         guard !ids.isEmpty else { return [] }
         return try sync {
             var out: [PendingItem] = []
-            let list = ids.map(String.init).joined(separator: ",")
-            try db.query("SELECT id, rel_path, kind, file_mtime FROM items WHERE thumb_state = 0 AND id IN (\(list))") { r in
+            // One bound JSON array, so the SQL text is constant and the statement is cached once.
+            let list = "[" + ids.map(String.init).joined(separator: ",") + "]"
+            try db.query("SELECT id, rel_path, kind, file_mtime FROM items WHERE thumb_state = 0 AND id IN (SELECT value FROM json_each(?))", [list]) { r in
                 out.append(PendingItem(id: r.int(0), relPath: r.string(1)!, kind: ItemKind(rawValue: r.string(2)!) ?? .other, mtime: r.double(3) ?? 0))
             }
             return out

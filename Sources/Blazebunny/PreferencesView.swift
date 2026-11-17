@@ -17,6 +17,7 @@ struct PreferencesView: View {
             }
         }
         .formStyle(.grouped)
+        .dsText(.body)
         .frame(width: 440)
         .fixedSize(horizontal: false, vertical: true)
         .preferredColorScheme(.dark)

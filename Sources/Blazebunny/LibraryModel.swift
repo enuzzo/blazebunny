@@ -97,6 +97,10 @@ final class LibraryModel {
     private(set) var counts = LibraryIndex.Counts()
     /// What the current view holds (the whole library when no filter is on).
     private(set) var summary = LibrarySummary()
+    /// Which copy button was just used, shown as "Copied" for a moment.
+    private(set) var copiedKind: CopyKind?
+    /// Incremented by Edit > Find, so the toolbar search field takes focus.
+    var searchFocusRequest = 0
     private(set) var libraryCreatedAt: Date?
     /// Item count per source for the current query, ignoring the source filter.
     private(set) var sourceCounts: [ItemSource: Int] = [:]
@@ -165,22 +169,36 @@ final class LibraryModel {
         panel.allowsMultipleSelection = false
         panel.prompt = "Open"
         panel.message = "Choose a folder of images. Blazebunny only reads it."
-        let box = NSButton(checkboxWithTitle: "Open as ghost: keep nothing after I close it", target: nil, action: nil)
+        let box = NSButton(checkboxWithTitle: "Open as ghost (no index or thumbnails kept)", target: nil, action: nil)
         box.state = ghost ? .on : .off
-        box.toolTip = "Index and thumbnails go to a temporary folder and are deleted when you close the ghost or quit. Use it for private or accounting folders."
+        box.toolTip = GhostText.explanation + " Use it for private or accounting folders."
         let accessory = NSView(frame: NSRect(x: 0, y: 0, width: 420, height: 36))
         box.frame = NSRect(x: 12, y: 8, width: 396, height: 20)
         accessory.addSubview(box)
         panel.accessoryView = accessory
         panel.isAccessoryViewDisclosed = true
-        guard panel.runModal() == .OK, let url = panel.url else { return }
-        open(url, ghost: box.state == .on)
+        let response = panel.runModal()
+        let asGhost = box.state == .on
+        if asGhost {
+            // The panel remembers the last folder in the app's own defaults: a ghost must
+            // not leave the folder's path behind.
+            for key in ["NSNavLastRootDirectory", "NSNavLastCurrentDirectory"] {
+                UserDefaults.standard.removeObject(forKey: key)
+            }
+        }
+        guard response == .OK, let url = panel.url else { return }
+        open(url, ghost: asGhost)
     }
 
     func open(_ url: URL, ghost: Bool = false) {
         let path = url.standardizedFileURL.path
-        if allLibraries.contains(where: { $0.path == path }) {
+        if let existing = allLibraries.first(where: { $0.path == path }) {
             select(path: path)  // already open, as a library or as a ghost
+            if existing.isGhost != ghost {
+                errorMessage = existing.isGhost
+                    ? "This folder is already open as a ghost, so nothing about it is saved. Close the ghost to add it as a normal library."
+                    : "This folder is already a saved library, so it was opened as one. Forget the library first to open it as a ghost."
+            }
             return
         }
         if ghost {
@@ -238,14 +256,7 @@ final class LibraryModel {
     func remove(_ lib: SavedLibrary) {
         saved.removeAll { $0.path == lib.path }
         persist()
-        if currentPath == lib.path {
-            stopScan()
-            library = nil
-            currentPath = nil
-            items = []
-            detail = nil
-            savedSearches = []
-        }
+        if currentPath == lib.path { dropCurrentLibrary() }
     }
 
     func select(path: String) {
@@ -399,14 +410,14 @@ final class LibraryModel {
     var showsMidjourneyGroup: Bool {
         let f = query.filter
         if f.sources.contains(.midjourney) || !f.versions.isEmpty || !f.params.isEmpty { return true }
-        if f.sources.isEmpty, let mj = sourceCounts[.midjourney], mj > 0, sourceCounts.count == 1 { return true }
+        if f.sources.isEmpty, let mj = sourceCounts[.midjourney], mj > 0 { return true }
         return false
     }
 
     var showsCameraGroup: Bool {
         let f = query.filter
         if f.sources.contains(.camera) || !f.cameras.isEmpty { return true }
-        if f.sources.isEmpty, let c = sourceCounts[.camera], c > 0, sourceCounts.count == 1 { return true }
+        if f.sources.isEmpty, let c = sourceCounts[.camera], c > 0 { return true }
         return false
     }
 
@@ -493,10 +504,17 @@ final class LibraryModel {
         scanTask = Task.detached(priority: .utility) { [weak self] in
             do {
                 try await scanner.run { p in
-                    Task { @MainActor in self?.didProgress(p) }
+                    // A cancelled scan may still report once more: ignore it after a switch.
+                    Task { @MainActor in
+                        guard let self, self.scanner === scanner else { return }
+                        self.didProgress(p)
+                    }
                 }
             } catch {
-                await MainActor.run { self?.errorMessage = "Scan stopped: \(error.localizedDescription)" }
+                await MainActor.run {
+                    guard let self, self.scanner === scanner else { return }
+                    self.errorMessage = "Scan stopped: \(error.localizedDescription)"
+                }
             }
         }
     }
@@ -511,7 +529,7 @@ final class LibraryModel {
 
     private func didProgress(_ p: ScanProgress) {
         progress = p
-        let interval: TimeInterval = items.isEmpty ? 0.3 : 2
+        let interval: TimeInterval = items.isEmpty ? 0.3 : 3
         if p.phase == .done || Date().timeIntervalSince(lastProgressReload) > interval {
             lastProgressReload = Date()
             scheduleReload(delay: 0)
@@ -539,6 +557,10 @@ final class LibraryModel {
             }.value
             guard !Task.isCancelled, let self, let (items, counts, sources, summary, created) = result, self.library === lib else { return }
             if items != self.items { self.items = items }
+            // An image selected before its metadata was read would stay on "Reading metadata…".
+            if let d = self.detail, d.metadata == nil, !d.metadataFailed {
+                self.detail = try? lib.index.detail(id: d.id)
+            }
             self.counts = counts
             if summary != self.summary { self.summary = summary }
             self.libraryCreatedAt = created
@@ -574,6 +596,11 @@ final class LibraryModel {
         guard !lines.isEmpty else { NSSound.beep(); return }
         NSPasteboard.general.clearContents()
         NSPasteboard.general.setString(lines.joined(separator: "\n"), forType: .string)
+        copiedKind = kind
+        Task { @MainActor [weak self] in
+            try? await Task.sleep(for: .seconds(1.4))
+            if self?.copiedKind == kind { self?.copiedKind = nil }
+        }
     }
 
     func revealInFinder() {
@@ -592,7 +619,7 @@ final class LibraryModel {
 /// Loads thumbnails from the packs off the main thread, with a memory cache.
 @MainActor
 final class ThumbnailLoader {
-    var library: Library? { didSet { cache.removeAllObjects(); missing.removeAll() } }
+    var library: Library? { didSet { cache.removeAllObjects(); missing.removeAll(); inFlight.removeAll() } }
     weak var scanner: FolderScanner?
     private let cache = NSCache<NSNumber, NSImage>()
     private var inFlight: [Int64: [(NSImage?) -> Void]] = [:]

@@ -42,18 +42,18 @@ struct InspectorView: View {
     }
 
     func header(_ m: ItemMetadata) -> some View {
-        HStack(spacing: 8) {
+        HStack(spacing: DS.Space.s) {
             Label(m.source.title, systemImage: m.source.symbol)
                 .dsText(.metaStrong)
-                .padding(.horizontal, 8)
-                .frame(height: 22)
-                .background(sourceTint(m.source).opacity(0.15), in: Capsule())
+                .padding(.horizontal, DS.Space.s)
+                .frame(height: DS.Size.badge)
+                .background(sourceTint(m.source).opacity(DS.Tint.fill), in: Capsule())
                 .foregroundStyle(sourceTint(m.source))
                 .onTapGesture { model.addFilter(.source, m.source.rawValue) }
                 .help("Show only \(m.source.title) images")
             Spacer()
             if m.promptText != nil || m.camera != nil {
-                Text("Click a value to filter").dsText(.meta).foregroundStyle(.tertiary)
+                Text("Click a value to filter").dsText(.meta).foregroundStyle(.secondary)
             }
         }
     }
@@ -76,12 +76,12 @@ struct InspectorView: View {
                 .fixedSize(horizontal: false, vertical: true)
             HStack(spacing: 8) {
                 Button { model.copy(.prompt) } label: {
-                    HStack(spacing: 6) { Text("Copy Prompt"); Text("⌘C").dsText(.caption).opacity(0.6) }
+                    Text(model.copiedKind == .prompt ? "Copied" : "Copy Prompt")
                 }
                 .buttonStyle(.borderedProminent)
                 if m.prompt != nil {
-                    Button("Text") { model.copy(.text) }
-                    Button("Parameters") { model.copy(.parameters) }
+                    Button(model.copiedKind == .text ? "Copied" : "Copy Text") { model.copy(.text) }
+                    Button(model.copiedKind == .parameters ? "Copied" : "Copy Parameters") { model.copy(.parameters) }
                 }
             }
             if let neg = m.generator?.negativePrompt, !neg.isEmpty {
@@ -114,7 +114,7 @@ struct InspectorView: View {
                 }
             }
             if let job = p.jobID {
-                InfoRow(label: "Job ID") { Text(job).dsText(.meta, .number).textSelection(.enabled).lineLimit(1).truncationMode(.middle) }
+                InfoRow(label: "Job ID") { Text(job).dsText(.label, .number).textSelection(.enabled).lineLimit(1).truncationMode(.middle) }
             }
         }
     }
@@ -131,8 +131,8 @@ struct InspectorView: View {
         InfoTable(title: "Generation") {
             if let t = g.tool { InfoRow(label: "Tool") { Text(t) } }
             if let m = g.model { InfoRow(label: "Model") { Text(m).lineLimit(1).truncationMode(.middle) } }
-            if let s = g.steps { InfoRow(label: "Steps") { Text("\(s)").monospacedDigit() } }
-            if let c = g.cfg { InfoRow(label: "CFG") { Text(CameraInfo.trim(c)).monospacedDigit() } }
+            if let s = g.steps { InfoRow(label: "Steps") { Text("\(s)").dsText(.label, .number) } }
+            if let c = g.cfg { InfoRow(label: "CFG") { Text(CameraInfo.trim(c)).dsText(.label, .number) } }
             if let s = g.sampler { InfoRow(label: "Sampler") { Text(s) } }
             if let s = g.seed { InfoRow(label: "Seed") { Text(s).dsText(.label, .number).textSelection(.enabled) } }
         }
@@ -142,7 +142,7 @@ struct InspectorView: View {
         InfoTable(title: "Camera") {
             if let cam = c.camera { InfoRow(label: "Camera") { FilterLink(cam, mono: false) { model.addFilter(.camera, cam) } } }
             if let l = c.lens { InfoRow(label: "Lens") { Text(l).lineLimit(1) } }
-            if let e = c.exposureSummary { InfoRow(label: "Exposure") { Text(e).monospacedDigit() } }
+            if let e = c.exposureSummary { InfoRow(label: "Exposure") { Text(e).dsText(.label, .number) } }
         }
     }
 
@@ -151,14 +151,14 @@ struct InspectorView: View {
         return InfoTable(title: "File") {
             if let date = m?.createdAt {
                 InfoRow(label: "Created") {
-                    Text(date.formatted(date: .abbreviated, time: .shortened)).monospacedDigit()
-                    Text(sourceNote(m!.createdSource)).dsText(.meta).foregroundStyle(.tertiary)
+                    Text(date.formatted(date: .abbreviated, time: .shortened)).dsText(.label, .number)
+                    Text(sourceNote(m!.createdSource)).dsText(.meta).foregroundStyle(.secondary)
                 }
             }
             if let a = m?.author, !a.isEmpty { InfoRow(label: "Author") { Text(a) } }
             if let w = m?.width, let h = m?.height {
                 InfoRow(label: "Dimensions") {
-                    Text("\(w) × \(h)").monospacedDigit()
+                    Text("\(w) × \(h)").dsText(.label, .number)
                     if let ar = m?.aspect { FilterLink(ar) { model.addFilter(.shape, "r:" + ar) } }
                 }
             }
@@ -182,7 +182,7 @@ struct InspectorView: View {
             .disabled(!model.isOnline)
             if !model.isOnline {
                 Label("Disk not connected — the original is not reachable.", systemImage: "externaldrive.badge.xmark")
-                    .dsText(.meta).foregroundStyle(.orange)
+                    .dsText(.meta).foregroundStyle(DS.Tint.warning)
             }
         }
     }
@@ -206,7 +206,7 @@ struct SectionTitle: View {
     let text: String
     init(_ text: String) { self.text = text }
     var body: some View {
-        Text(text.uppercased()).dsText(.captionStrong).foregroundStyle(.secondary).tracking(0.4)
+        Text(text.uppercased()).dsText(.caption).foregroundStyle(.secondary)
     }
 }
 
@@ -226,14 +226,14 @@ struct InfoRow<Value: View>: View {
     let label: String
     @ViewBuilder var value: Value
     var body: some View {
-        HStack(spacing: 8) {
+        HStack(alignment: .firstTextBaseline, spacing: DS.Space.s) {
             Text(label).foregroundStyle(.secondary).frame(width: DS.Size.inspectorLabel, alignment: .leading)
-            HStack(spacing: 6) { value }
+            HStack(spacing: DS.Space.iconGap) { value }
             Spacer(minLength: 0)
         }
         .dsText(.label)
         .frame(minHeight: DS.Size.control)
-        .overlay(alignment: .bottom) { Divider() }
+        .overlay(alignment: .bottom) { Rectangle().fill(DS.Palette.rowRule).frame(height: 1) }
     }
 }
 

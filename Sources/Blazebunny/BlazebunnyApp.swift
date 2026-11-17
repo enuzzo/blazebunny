@@ -30,16 +30,22 @@ struct BlazebunnyApp: App {
                 Button("Close Ghost") { if let g = model.currentLibrary, g.isGhost { model.closeGhost(g) } }
                     .disabled(!model.currentIsGhost)
             }
+            CommandGroup(after: .textEditing) {
+                Button("Find") { model.searchFocusRequest += 1 }
+                    .keyboardShortcut("f")
+                    .disabled(model.library == nil)
+            }
             CommandMenu("Library") {
                 Button("Rescan") { model.rescan() }
                     .keyboardShortcut("r")
-                    .disabled(model.library == nil)
+                    .disabled(model.library == nil || !model.isOnline)
                 Divider()
-                Button("Clear Filters") { model.clearAll() }
+                Button("Clear All") { model.clearAll() }
                     .keyboardShortcut(.delete, modifiers: [.command, .shift])
+                    .disabled(model.library == nil)
             }
             CommandGroup(after: .toolbar) {
-                Button(model.fillCells ? "Show Whole Images" : "Fill Thumbnails") { model.fillCells.toggle() }
+                Button(model.fillCells ? "Fit Thumbnails" : "Fill Thumbnails") { model.fillCells.toggle() }
                     .keyboardShortcut("f", modifiers: [.command, .option])
                 Button("Bigger Thumbnails") { model.cellSize = min(360, model.cellSize + 40) }
                     .keyboardShortcut("+")
@@ -66,6 +72,7 @@ struct ContentView: View {
     @State private var showInspector = true
     @State private var showSave = false
     @AppStorage(Typeface.defaultsKey) private var useBrandTypeface = true
+    @FocusState private var searchFocused: Bool
 
     var body: some View {
         // The font modifier reads the environment, so it sits inside `.environment`.
@@ -97,15 +104,29 @@ struct ContentView: View {
                     }
                     .frame(height: DS.Size.headerRow)
                     Divider().overlay(DS.Palette.hairline)
-                    if model.items.isEmpty && (model.counts.total > 0) {
+                    if model.items.isEmpty && model.counts.total > 0 {
                         ContentUnavailableView {
                             Label("No Matches", systemImage: "line.3.horizontal.decrease.circle")
                         } description: {
-                            Text("No images match these filters.")
+                            Text(model.query.filter.isEmpty && !model.query.text.isEmpty
+                                 ? "No images match “\(model.query.text)”."
+                                 : "No images match these filters.")
                         } actions: {
-                            Button("Clear Filters") { model.clearAll() }
+                            Button("Clear All") { model.clearAll() }
                         }
                         .frame(maxHeight: .infinity)
+                    } else if model.items.isEmpty && model.progress.map({ $0.phase != .done }) ?? true {
+                        ContentUnavailableView {
+                            Label("Looking for images…", systemImage: "magnifyingglass")
+                        } description: {
+                            Text(model.isOnline ? "Listing the folder. This can take a while on a large or external disk."
+                                                : "The folder is not connected.")
+                        }
+                        .frame(maxHeight: .infinity)
+                    } else if model.items.isEmpty {
+                        ContentUnavailableView("No Images", systemImage: "photo.on.rectangle",
+                                               description: Text("This folder has no supported images."))
+                            .frame(maxHeight: .infinity)
                     } else {
                         GridView(model: model, items: model.items, cellSize: model.cellSize, fill: model.fillCells,
                                  sections: model.query.sort.isByDate)
@@ -125,6 +146,8 @@ struct ContentView: View {
         .background { WindowBackdrop() }
         .preferredColorScheme(.dark)
         .searchable(text: $model.query.text, placement: .toolbar, prompt: "Search prompts and names")
+        .searchFocused($searchFocused)
+        .onChange(of: model.searchFocusRequest) { _, _ in searchFocused = true }
         .toolbar {
             ToolbarItemGroup {
                 Picker("Thumbnails", selection: $model.fillCells) {
@@ -133,26 +156,27 @@ struct ContentView: View {
                 }
                 .pickerStyle(.segmented)
                 .help("Fill crops thumbnails to squares; Fit shows whole images (⌥⌘F)")
-                Slider(value: $model.cellSize, in: 80...360)
+                Slider(value: $model.cellSize, in: 80...360) { Text("Thumbnail Size") }
                     .frame(width: 100)
                     .help("Thumbnail size (⌘+ / ⌘−)")
                 Picker("Sort", selection: $model.query.sort) {
                     ForEach(ItemSort.allCases, id: \.self) { Text($0.title).tag($0) }
                 }
                 .pickerStyle(.menu)
-                .help("Dates are the ones embedded in the file when present")
+                .help("Sort order. Dates are the ones embedded in the file when present.")
             }
             ToolbarItem {
                 if let s = model.activeSavedSearch, model.savedSearchIsModified {
+                    // Saving a new search is the safe primary action; overwriting is a menu choice.
                     Menu {
-                        Button("Update “\(s.name)”") { model.updateSavedSearch(s.id) }
                         Button("Save as New Search…") { showSave = true }
+                        Button("Update “\(s.name)” with Current Filters") { model.updateSavedSearch(s.id) }
                     } label: {
                         Label("Save Search", systemImage: "bookmark.fill")
                     } primaryAction: {
-                        model.updateSavedSearch(s.id)
+                        showSave = true
                     }
-                    .help("Update “\(s.name)” with the current filters")
+                    .help("Save these filters as a new search. “\(s.name)” has changed: open the menu to update it instead.")
                 } else {
                     Button { showSave = true } label: { Label("Save Search", systemImage: "bookmark") }
                         .help("Save the current filters and search as a sidebar item (⌘S)")
@@ -201,8 +225,7 @@ struct PageHeader: View {
                 .lineLimit(1)
                 .truncationMode(.middle)
             if !subtitle.isEmpty {
-                Text(subtitle)
-                    .dsText(.meta, .number)
+                RichText(subtitle, .label)
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
                     .fixedSize()
@@ -220,18 +243,18 @@ struct StatusBar: View {
     var body: some View {
         HStack(spacing: DS.Space.m) {
             if model.library != nil {
-                Image(systemName: model.isOnline ? "externaldrive.fill.badge.checkmark" : "externaldrive.badge.xmark")
-                    .foregroundStyle(model.isOnline ? .green : .orange)
+                // State shows by exception: quiet when connected, coral when not.
+                Image(systemName: model.isOnline ? "externaldrive" : "externaldrive.badge.xmark")
+                    .foregroundStyle(model.isOnline ? Color.secondary : DS.Tint.warning)
                     .help(model.isOnline ? "Folder connected" : "Folder not connected: browsing the cached index")
-                Text(summary).monospacedDigit()
+                RichText(summary, .label)
                 Spacer()
                 if let p = model.progress, p.phase != .done {
                     ProgressView().controlSize(.small)
-                    Text(phaseText(p)).monospacedDigit()
+                    RichText(phaseText(p), .label)
                 }
             }
         }
-        .dsText(.label, .number)
         .foregroundStyle(.secondary)
         .padding(.horizontal, DS.Space.l)
         .frame(height: DS.Size.statusBar)
@@ -240,7 +263,10 @@ struct StatusBar: View {
 
     var summary: String {
         let c = model.counts
-        return "\(c.total.formatted()) indexed · \(c.withPrompt.formatted()) with prompt · \(c.thumbnailsDone.formatted()) thumbnails"
+        // While scanning, the thumbnail count is on the right: do not say it twice.
+        let scanning = model.progress.map { $0.phase != .done } ?? false
+        let base = "\(c.total.formatted()) indexed · \(c.withPrompt.formatted()) with prompt"
+        return scanning ? base : base + " · \(c.thumbnailsDone.formatted()) thumbnails"
     }
 
     func phaseText(_ p: ScanProgress) -> String {

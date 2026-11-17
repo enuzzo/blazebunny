@@ -28,11 +28,21 @@ public final class FolderScanner: @unchecked Sendable {
     /// Number of files whose metadata was read (for tests and benchmarks).
     public var metadataReads: Int { lock.withLock { _metadataReads } }
 
+    /// Whether the folder is still there as a directory. Checked before pruning and
+    /// before saving each batch, so a disk that vanishes mid-scan cannot wipe the index
+    /// or mark unread files as failed. Replaceable in tests.
+    public var isRootReachable: @Sendable () -> Bool
+
     public init(root: URL, index: LibraryIndex, thumbnails: ThumbnailStore?, ioConcurrency: Int = 2) {
-        self.root = root.standardizedFileURL
+        let root = root.standardizedFileURL
+        self.root = root
         self.index = index
         self.thumbnails = thumbnails
         self.ioConcurrency = max(1, ioConcurrency)
+        self.isRootReachable = {
+            var isDir: ObjCBool = false
+            return FileManager.default.fileExists(atPath: root.path, isDirectory: &isDir) && isDir.boolValue
+        }
     }
 
     public func cancel() { lock.withLock { cancelled = true } }
@@ -57,7 +67,8 @@ public final class FolderScanner: @unchecked Sendable {
         let known = try index.knownFiles()
         var seen = Set<String>()
         var batch: [FileRecord] = []
-        for record in enumerate() {
+        let listing = enumerate()
+        for record in listing.records {
             if isCancelled { return }
             seen.insert(record.relPath)
             if let k = known[record.relPath], k.size == record.size, k.mtime == record.mtime { continue }
@@ -70,8 +81,12 @@ public final class FolderScanner: @unchecked Sendable {
             }
         }
         try index.upsertFiles(batch)
+        // Only prune rows for files that are really gone. A listing that hit errors, an
+        // unreachable root, or an empty result for a library that had files all look the
+        // same as "everything was deleted", and must never wipe the index.
+        let listingIsTrustworthy = listing.complete && isRootReachable() && !(seen.isEmpty && !known.isEmpty)
         let gone = known.keys.filter { !seen.contains($0) }
-        if !gone.isEmpty { try index.deleteFiles(relPaths: gone) }
+        if listingIsTrustworthy, !gone.isEmpty { try index.deleteFiles(relPaths: gone) }
 
         var counts = try index.counts()
         p.total = counts.total
@@ -95,6 +110,8 @@ public final class FolderScanner: @unchecked Sendable {
                 let results = await mapConcurrently(pendingMeta) { item in
                     (item.id, self.readMetadata(item))
                 }
+                // The disk may have vanished during this batch: do not record failures for it.
+                guard isRootReachable() else { return }
                 try index.saveMetadata(results)
                 p.metadataDone += results.count
                 report()
@@ -102,10 +119,12 @@ public final class FolderScanner: @unchecked Sendable {
             if isCancelled { return }
 
             if let thumbnails {
-                let budget = pendingMeta.isEmpty ? 0 : max(0.25, Date().timeIntervalSince(roundStart))
+                // About as long as the metadata batch took, so metadata (search, filters,
+                // dates) is ready soon while thumbnails still appear continuously.
+                let budget = pendingMeta.isEmpty ? 0 : max(0.05, Date().timeIntervalSince(roundStart))
                 let sliceStart = Date()
                 repeat {
-                    let made = try await makeThumbnailBatch(thumbnails)
+                    guard let made = try await makeThumbnailBatch(thumbnails) else { return }
                     if made == 0 { break }
                     didWork = true
                     if pendingMeta.isEmpty { p.phase = .thumbnails }
@@ -125,7 +144,8 @@ public final class FolderScanner: @unchecked Sendable {
 
     /// Makes one batch of thumbnails, the prioritised (visible) items first.
     /// Returns how many were processed; 0 means nothing is left.
-    private func makeThumbnailBatch(_ thumbnails: ThumbnailStore) async throws -> Int {
+    /// Returns nil when the disk vanished during the batch (nothing is recorded).
+    private func makeThumbnailBatch(_ thumbnails: ThumbnailStore) async throws -> Int? {
         let wanted = lock.withLock { () -> [Int64] in
             let w = priority
             priority = []
@@ -144,6 +164,7 @@ public final class FolderScanner: @unchecked Sendable {
                 return (item.id, nil)
             }
         }
+        guard isRootReachable() else { return nil }
         for (id, loc) in results { try index.saveThumbnail(id: id, loc) }
         return results.count
     }
@@ -160,10 +181,14 @@ public final class FolderScanner: @unchecked Sendable {
     }
 
     /// Lists supported files in directory order, skipping hidden files and packages.
-    func enumerate() -> [FileRecord] {
+    /// `complete` is false when any directory could not be read.
+    func enumerate() -> (records: [FileRecord], complete: Bool) {
         let keys: [URLResourceKey] = [.isRegularFileKey, .fileSizeKey, .contentModificationDateKey]
+        let hadError = Locked(false)
         guard let e = FileManager.default.enumerator(at: root, includingPropertiesForKeys: keys,
-                                                     options: [.skipsHiddenFiles, .skipsPackageDescendants]) else { return [] }
+                                                     options: [.skipsHiddenFiles, .skipsPackageDescendants],
+                                                     errorHandler: { _, _ in hadError.set(true); return true })
+        else { return ([], false) }
         let rootPath = root.resolvingSymlinksInPath().path
         var out: [FileRecord] = []
         for case let url as URL in e {
@@ -176,7 +201,7 @@ public final class FolderScanner: @unchecked Sendable {
             out.append(FileRecord(relPath: path, size: Int64(v.fileSize ?? 0),
                                   mtime: v.contentModificationDate?.timeIntervalSince1970 ?? 0, kind: kind))
         }
-        return out
+        return (out, !hadError.value)
     }
 
     /// Runs `body` over `items` with at most `ioConcurrency` in flight, keeping order.

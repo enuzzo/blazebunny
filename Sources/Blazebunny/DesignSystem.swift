@@ -20,6 +20,12 @@ enum DS {
         static let m: CGFloat = 12
         static let l: CGFloat = 16
         static let xl: CGFloat = 24
+        /// Between an icon and the text next to it (sidebar rows).
+        static let iconText: CGFloat = 10
+        /// Between a small icon and its label inside a control.
+        static let iconGap: CGFloat = 6
+        /// Horizontal padding inside a pill.
+        static let pillInset: CGFloat = 10
     }
 
     enum Size {
@@ -30,6 +36,14 @@ enum DS {
         /// Title, count and filter pills share this one row.
         static let headerRow: CGFloat = 52
         static let statusBar: CGFloat = 32
+        /// Fixed icon column in sidebar rows, so every row's text lines up.
+        static let sidebarIcon: CGFloat = 20
+        /// Tiny glyphs inside pills (chevron, clear cross).
+        static let microIcon: CGFloat = 8
+        /// Height of a small status badge (source chip, ghost badge).
+        static let badge: CGFloat = 22
+        static let dataBar: CGFloat = 72
+        static let dataBarHeight: CGFloat = 4
         static let inspectorLabel: CGFloat = 92
     }
 
@@ -42,9 +56,18 @@ enum DS {
 
     /// Tints by meaning, never by decoration.
     enum Tint {
-        static let midjourney = Color.indigo
-        static let stableDiffusion = Color.green
-        static let camera = Color.teal
+        /// Lighter indigo so text in this tint keeps a readable contrast on the dark window.
+        static let midjourney = Color(red: 0.68, green: 0.72, blue: 1.0)
+        static let stableDiffusion = Color(red: 0.557, green: 0.839, blue: 0.627)
+        static let camera = Color(red: 0.486, green: 0.812, blue: 0.890)
+        /// Text of an active filter: the system accent lightened for contrast on dark.
+        static var activeText: Color {
+            Color(nsColor: NSColor.controlAccentColor.blended(withFraction: 0.35, of: .white) ?? .controlAccentColor)
+        }
+        /// One opacity for every tinted fill.
+        static let fill: Double = 0.15
+        /// Offline or something needs attention. Distinct from the amber of ghosts.
+        static let warning = Color(red: 0.96, green: 0.45, blue: 0.38)
     }
 }
 
@@ -58,11 +81,16 @@ extension DS {
     struct TextStyle {
         let size: CGFloat
         let weight: Font.Weight
+        /// Points taken off the size when the text is set in the mono: Space Mono is about 12%
+        /// wider than Space Grotesk, so 0.5 pt less keeps lines visually even.
+        var monoAdjust: CGFloat = 0
+        /// Letter spacing in points: tighter on big titles, looser on small caps.
+        var tracking: CGFloat = 0
 
         /// One big statistic (library count). The only place a light-looking, large size is used.
         static let display = TextStyle(size: 40, weight: .regular)
         /// A page or view title. 20 sits between Apple's Title 2 (17) and Title 1 (22) and fits the 52 pt header row.
-        static let title = TextStyle(size: 20, weight: .medium)
+        static let title = TextStyle(size: 20, weight: .medium, tracking: -0.3)
         /// A sheet or popover heading.
         static let headline = TextStyle(size: 13, weight: .semibold)
         /// Default text: sidebar rows, general copy.
@@ -70,21 +98,21 @@ extension DS {
         /// Long text people actually read: the prompt in the inspector.
         static let reading = TextStyle(size: 15, weight: .regular)
         /// Controls and table rows: pills, inspector rows, footer.
-        static let label = TextStyle(size: 12, weight: .regular)
-        static let labelStrong = TextStyle(size: 12, weight: .semibold)
+        static let label = TextStyle(size: 12, weight: .regular, monoAdjust: 0.5)
+        static let labelStrong = TextStyle(size: 12, weight: .semibold, monoAdjust: 0.5)
         /// Secondary information: counts next to titles, notes.
-        static let meta = TextStyle(size: 11, weight: .regular)
+        static let meta = TextStyle(size: 11, weight: .regular, monoAdjust: 0.5)
         static let metaStrong = TextStyle(size: 11, weight: .semibold)
-        /// Smallest text (the macOS minimum is 10): section captions, key hints.
-        static let caption = TextStyle(size: 10, weight: .medium)
-        static let captionStrong = TextStyle(size: 10, weight: .semibold)
+        /// Smallest text (the macOS minimum is 10): uppercase section captions.
+        static let caption = TextStyle(size: 10, weight: .semibold, tracking: 0.6)
     }
 }
 
 extension View {
     /// Sets text from the type scale. Words are sans; numbers and data are mono.
     func dsText(_ style: DS.TextStyle, _ role: TextRole = .text) -> some View {
-        dsFont(style.size, weight: style.weight, role)
+        dsFont(style.size - (role == .number ? style.monoAdjust : 0), weight: style.weight, role)
+            .tracking(style.tracking)
     }
 }
 
@@ -96,6 +124,14 @@ extension DS {
         static let window = Color(red: 0.047, green: 0.051, blue: 0.059)
         static let glow = Color(red: 0.30, green: 0.34, blue: 0.45)
         static let hairline = Color.white.opacity(0.09)
+        /// Rules between table rows.
+        static let rowRule = Color.white.opacity(0.10)
+        /// Outline of a control that is off (3:1 is the target for control boundaries; 0.20 is the
+        /// strongest that does not make pills shout).
+        static let controlStroke = Color.white.opacity(0.20)
+        /// Bars that show data are neutral: the accent is kept for selection.
+        static let dataBar = Color.white.opacity(0.45)
+        static let dataTrack = Color.white.opacity(0.08)
         static let glassFill = Color.white.opacity(0.045)
         static let glassFillSolid = Color(red: 0.094, green: 0.098, blue: 0.110)
     }
@@ -155,6 +191,39 @@ extension View {
     }
 }
 
+/// Sidebar rows: icon in a fixed column, a little air before the text.
+struct SidebarLabelStyle: LabelStyle {
+    func makeBody(configuration: Configuration) -> some View {
+        HStack(spacing: DS.Space.iconText) {
+            configuration.icon.frame(width: DS.Size.sidebarIcon, alignment: .center)
+            configuration.title
+        }
+    }
+}
+
+/// Section title in the sidebar. All of them share one quiet style; a tint
+/// and icon are only for ghosts.
+struct SidebarHeader: View {
+    let title: String
+    var icon: AnyView?
+    var tint: Color = .secondary
+
+    init(_ title: String, tint: Color = .secondary, @ViewBuilder icon: () -> some View = { EmptyView() }) {
+        self.title = title
+        self.tint = tint
+        let built = icon()
+        self.icon = (built is EmptyView) ? nil : AnyView(built)
+    }
+
+    var body: some View {
+        HStack(spacing: DS.Space.iconGap) {
+            icon
+            Text(title).dsText(.metaStrong)
+        }
+        .foregroundStyle(tint)
+    }
+}
+
 /// The one style for everything in the filter row: filter pills and the
 /// actions next to them. Neutral outline when off, tinted fill when on.
 struct PillStyle: ButtonStyle {
@@ -165,11 +234,11 @@ struct PillStyle: ButtonStyle {
         configuration.label
             .dsText(.label)
             .foregroundStyle(isOn ? tint : .primary)
-            .padding(.horizontal, DS.Space.m - 2)
+            .padding(.horizontal, DS.Space.pillInset)
             .frame(height: DS.Size.control)
             .background {
-                Capsule().fill(isOn ? tint.opacity(0.15) : Color.primary.opacity(configuration.isPressed ? 0.10 : 0.0001))
-                if !isOn { Capsule().strokeBorder(Color.primary.opacity(0.14)) }
+                Capsule().fill(isOn ? tint.opacity(DS.Tint.fill) : Color.primary.opacity(configuration.isPressed ? 0.10 : 0.0001))
+                if !isOn { Capsule().strokeBorder(DS.Palette.controlStroke) }
             }
             .contentShape(Capsule())
             .opacity(configuration.isPressed ? 0.75 : 1)

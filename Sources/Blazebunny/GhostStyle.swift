@@ -7,6 +7,13 @@ extension DS.Tint {
     static let ghost = Color(red: 0.95, green: 0.72, blue: 0.38)
 }
 
+/// The one sentence that explains a ghost, used in every tooltip and note.
+enum GhostText {
+    static let explanation = "Ghost: the index and thumbnails are temporary and are deleted when you close it. Your files are never changed."
+    static let badge = "Ghost · temporary"
+    static let section = "Ghosts · temporary"
+}
+
 /// A line-drawn ghost: rounded head, wavy hem, two eyes.
 struct GhostShape: Shape {
     func path(in rect: CGRect) -> Path {
@@ -34,11 +41,14 @@ struct GhostShape: Shape {
 struct GhostIcon: View {
     var size: CGFloat = 16
     var tint: Color = DS.Tint.ghost
+    /// True where text next to the icon already says "ghost", so VoiceOver reads it once.
+    var decorative = false
 
     var body: some View {
         GhostShape()
             .stroke(tint, style: StrokeStyle(lineWidth: max(1.2, size * 0.075), lineCap: .round, lineJoin: .round))
             .frame(width: size, height: size)
+            .accessibilityHidden(decorative)
             .accessibilityLabel("Ghost")
     }
 }
@@ -46,17 +56,17 @@ struct GhostIcon: View {
 /// "Ghost" pill with a dashed outline, shown wherever the open folder is a ghost.
 struct GhostBadge: View {
     var body: some View {
-        HStack(spacing: DS.Space.xs + 2) {
-            GhostIcon(size: 14)
-            Text("Ghost · nothing is kept")
+        HStack(spacing: DS.Space.iconGap) {
+            GhostIcon(size: 14, decorative: true)
+            Text(GhostText.badge)
                 .dsText(.metaStrong)
                 .foregroundStyle(DS.Tint.ghost)
         }
         .padding(.horizontal, DS.Space.s + 2)
-        .frame(height: 24)
-        .background(Capsule().fill(DS.Tint.ghost.opacity(0.10)))
+        .frame(height: DS.Size.badge)
+        .background(Capsule().fill(DS.Tint.ghost.opacity(DS.Tint.fill)))
         .overlay(Capsule().strokeBorder(DS.Tint.ghost.opacity(0.8), style: StrokeStyle(lineWidth: 1, dash: [4, 3])))
-        .help("This folder is open as a ghost. Its index and thumbnails are temporary and are deleted when you close it or quit.")
+        .help(GhostText.explanation)
     }
 }
 

@@ -10,6 +10,9 @@ struct SidebarView: View {
     /// When the selection last changed, to tell "click to select" from "click on the selected row".
     @State private var selectedSince = Date.distantPast
     @State private var pendingRename: Task<Void, Never>?
+    @State private var pendingForget: SavedLibrary?
+    @State private var pendingDelete: SavedSearch?
+    @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
 
     var selection: Binding<SidebarItem?> {
         Binding(get: { model.sidebarSelection }, set: { selectedSince = Date(); model.selectSidebar($0) })
@@ -17,7 +20,7 @@ struct SidebarView: View {
 
     var body: some View {
         List(selection: selection) {
-            Section("Libraries") {
+            Section {
                 ForEach(model.saved) { lib in
                     libraryRow(lib)
                         .badge(lib.path == model.currentPath && model.counts.total > 0 ? Text(model.counts.total.formatted()) : nil)
@@ -27,9 +30,11 @@ struct SidebarView: View {
                             Button("Rename…") { beginRename(lib) }
                             Button("Show in Finder") { NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: lib.path)]) }
                             Divider()
-                            Button("Forget Library", role: .destructive) { model.remove(lib) }
+                            Button("Forget Library…", role: .destructive) { pendingForget = lib }
                         }
                 }
+            } header: {
+                SidebarHeader("Libraries")
             }
             if !model.ghosts.isEmpty {
                 Section {
@@ -37,30 +42,27 @@ struct SidebarView: View {
                         libraryRow(lib)
                             .badge(lib.path == model.currentPath && model.counts.total > 0 ? Text(model.counts.total.formatted()) : nil)
                             .tag(SidebarItem.library(lib.path))
-                            .help("Ghost: \(lib.path)\nNothing is kept after you close it.")
+                            .help("\(lib.path)\n\(GhostText.explanation)")
                             .contextMenu {
                                 Button("Rename…") { beginRename(lib) }
                                 Divider()
-                                Button("Close Ghost and Delete Its Data", role: .destructive) { model.closeGhost(lib) }
+                                Button("Close Ghost", role: .destructive) { model.closeGhost(lib) }
                             }
                     }
                 } header: {
-                    Label {
-                        Text("Ghosts · leave no trace")
-                    } icon: {
-                        GhostIcon(size: 14)
-                    }
-                    .foregroundStyle(DS.Tint.ghost)
+                    SidebarHeader(GhostText.section, tint: DS.Tint.ghost) { GhostIcon(size: 12, decorative: true) }
                 }
             }
             if model.library != nil {
-                Section(model.currentLibraryName) {
+                Section {
                     ForEach(BuiltInView.allCases.filter { $0 != .all }) { v in
                         Label(v.title, systemImage: v.symbol).tag(SidebarItem.view(v))
                     }
+                } header: {
+                    SidebarHeader("Views")
                 }
                 if !model.savedSearches.isEmpty {
-                    Section("Saved Searches") {
+                    Section {
                         savedRows(in: nil)
                         ForEach(model.savedFolders, id: \.self) { folder in
                             DisclosureGroup {
@@ -69,16 +71,19 @@ struct SidebarView: View {
                                 Label(folder, systemImage: "folder")
                             }
                         }
+                    } header: {
+                        SidebarHeader("Saved Searches")
                     }
                 }
             }
         }
         .listStyle(.sidebar)
+        .labelStyle(SidebarLabelStyle())
         .scrollContentBackground(.hidden)
         .background {
             ZStack {
                 WindowBackdrop()
-                Rectangle().fill(.ultraThinMaterial).opacity(0.5)
+                if !reduceTransparency { Rectangle().fill(.ultraThinMaterial).opacity(0.5) }
             }
         }
         .safeAreaInset(edge: .bottom) {
@@ -88,12 +93,25 @@ struct SidebarView: View {
                 Spacer()
                 Button { model.openFolderPanel(ghost: true) } label: { GhostIcon(size: 18) }
                     .buttonStyle(.borderless)
-                    .help("Open a Ghost Folder… (⇧⌘O): keeps nothing after you close it")
+                    .accessibilityLabel("Open Ghost Folder")
+                    .help("Open a Ghost Folder… (⇧⌘O). " + GhostText.explanation)
             }
             .padding(12)
             .frame(maxWidth: .infinity, alignment: .leading)
         }
         .sheet(item: $editing) { s in SaveSearchSheet(model: model, existing: s) }
+        .confirmationDialog("Forget this library?", isPresented: Binding(get: { pendingForget != nil }, set: { if !$0 { pendingForget = nil } }),
+                            presenting: pendingForget) { lib in
+            Button("Forget “\(lib.name)”", role: .destructive) { model.remove(lib) }
+        } message: { _ in
+            Text("The folder and its images are not touched. Only Blazebunny's index and thumbnails for it are forgotten.")
+        }
+        .confirmationDialog("Delete this saved search?", isPresented: Binding(get: { pendingDelete != nil }, set: { if !$0 { pendingDelete = nil } }),
+                            presenting: pendingDelete) { s in
+            Button("Delete “\(s.name)”", role: .destructive) { model.deleteSavedSearch(s.id) }
+        } message: { _ in
+            Text("Your images are not affected.")
+        }
     }
 
     /// The library's name, editable in place. Renaming only changes the name
@@ -117,10 +135,11 @@ struct SidebarView: View {
                 if lib.isGhost { GhostIcon(size: 16) } else { Image(systemName: "photo.stack") }
             }
             .padding(.vertical, lib.isGhost ? 2 : 0)
-            .padding(.horizontal, lib.isGhost ? 4 : 0)
+            .padding(.leading, lib.isGhost ? 6 : 0)
+            .padding(.trailing, lib.isGhost ? 10 : 0)
             .overlay {
                 if lib.isGhost {
-                    RoundedRectangle(cornerRadius: 7, style: .continuous)
+                    RoundedRectangle(cornerRadius: DS.Radius.medium, style: .continuous)
                         .strokeBorder(DS.Tint.ghost.opacity(0.7), style: StrokeStyle(lineWidth: 1, dash: [4, 3]))
                 }
             }
@@ -134,8 +153,10 @@ struct SidebarView: View {
     func slowClick(_ lib: SavedLibrary) {
         pendingRename?.cancel()
         let wait = NSEvent.doubleClickInterval
+        // Only when the library is shown plain: after filtering, a click means "show everything".
         guard renamingPath == nil,
               model.sidebarSelection == .library(lib.path),
+              model.query.filter.isEmpty, model.query.text.isEmpty,
               Date().timeIntervalSince(selectedSince) > wait + 0.1 else { return }
         pendingRename = Task { @MainActor in
             try? await Task.sleep(for: .seconds(wait + 0.15))
@@ -166,9 +187,11 @@ struct SidebarView: View {
             .tag(SidebarItem.saved(s.id))
             .contextMenu {
                 Button("Edit…") { editing = s }
-                Button("Update with Current Filters") { model.updateSavedSearch(s.id) }
+                if model.activeSavedSearch?.id == s.id {
+                    Button("Update with Current Filters") { model.updateSavedSearch(s.id) }
+                }
                 Divider()
-                Button("Delete", role: .destructive) { model.deleteSavedSearch(s.id) }
+                Button("Delete…", role: .destructive) { pendingDelete = s }
             }
         }
         .onMove { from, to in model.moveSavedSearches(in: folder, from: from, to: to) }

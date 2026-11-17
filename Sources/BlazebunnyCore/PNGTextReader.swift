@@ -59,7 +59,7 @@ public enum PNGTextReader {
             let length = Int(be32(bytes, off))
             let type = String(decoding: bytes[(off + 4)..<(off + 8)], as: UTF8.self)
             if type == "IDAT" || type == "IEND" { return .complete(info) }
-            guard length >= 0, length < 1 << 30 else { return .invalid }
+            guard length >= 0, length < 16 << 20 else { return .invalid }  // text chunks are small; 16 MB is generous
             let end = off + 8 + length + 4
             // Only text chunks and IHDR need their body; others can be skipped,
             // but we still need their header to find the next chunk.

@@ -42,16 +42,27 @@ struct GhostStorageTests {
         #expect(contents(folder).sorted() == (0..<5).map { "p\($0).png" }.sorted())
     }
 
-    @Test func purgeAllRemovesOrphansFromACrashedSession() throws {
+    @Test func purgeAllRemovesOrphansOfDeadProcessesOnly() throws {
         let root = makeRoot()
         defer { try? FileManager.default.removeItem(at: root) }
-        let a = try GhostStorage.makeBase(root: root)
-        let b = try GhostStorage.makeBase(root: root)
-        try Data("x".utf8).write(to: a.appendingPathComponent("index.sqlite"))
-        #expect(contents(root).count == 2)
-        #expect(GhostStorage.purgeAll(root: root) == 2)
-        #expect(!FileManager.default.fileExists(atPath: a.path))
-        #expect(!FileManager.default.fileExists(atPath: b.path))
+        let dead1 = try GhostStorage.makeBase(root: root, pid: 99_990)
+        let dead2 = try GhostStorage.makeBase(root: root, pid: 99_991)
+        let live = try GhostStorage.makeBase(root: root, pid: 4_242)  // another running copy
+        try Data("x".utf8).write(to: dead1.appendingPathComponent("index.sqlite"))
+        #expect(contents(root).count == 3)
+        #expect(GhostStorage.purgeAll(root: root, isAlive: { $0 == 4_242 }) == 2)
+        #expect(!FileManager.default.fileExists(atPath: dead1.path))
+        #expect(!FileManager.default.fileExists(atPath: dead2.path))
+        #expect(FileManager.default.fileExists(atPath: live.path), "a running copy's ghost must survive")
+    }
+
+    @Test func baseNameCarriesTheOwnerPID() throws {
+        let root = makeRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let base = try GhostStorage.makeBase(root: root)
+        #expect(GhostStorage.ownerPID(of: base) == getpid())
+        #expect(GhostStorage.processIsAlive(getpid()))
+        #expect(!GhostStorage.processIsAlive(2_147_000_000))
     }
 
     @Test func purgeRefusesPathsOutsideTheGhostRoot() throws {

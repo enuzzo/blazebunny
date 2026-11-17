@@ -18,6 +18,9 @@ final class SQLiteDB {
             sqlite3_close(handle)
             throw Error(message: msg)
         }
+        // Wait for a competing connection (an old scan still finishing after a library
+        // switch) instead of failing at once with "database is locked".
+        sqlite3_busy_timeout(handle, 5000)
     }
 
     deinit {

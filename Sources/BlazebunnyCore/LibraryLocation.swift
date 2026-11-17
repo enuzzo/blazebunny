@@ -40,7 +40,7 @@ public final class Library: @unchecked Sendable {
         directory = LibraryLocation.directory(for: root, base: base)
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         index = try LibraryIndex(url: directory.appendingPathComponent("index.sqlite"))
-        thumbnails = try ThumbnailStore(directory: directory)
+        thumbnails = try ThumbnailStore.shared(directory: directory)
         try index.setValue(root.path, forKey: "root_path")
     }
 }

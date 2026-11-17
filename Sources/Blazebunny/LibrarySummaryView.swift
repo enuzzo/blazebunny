@@ -35,12 +35,27 @@ struct LibrarySummaryView: View {
                 .dsText(.label)
                 .foregroundStyle(.secondary)
                 .lineLimit(1)
-            Text(s.total.formatted())
-                .dsText(.display, .number)
-            Text(s.total == 1 ? "image" : "images")
-                .dsText(.meta)
-                .foregroundStyle(.secondary)
+            // Number and unit read as one phrase on one baseline. The mono's separator takes a
+            // whole character cell, so it is pulled in to keep "23.193" from reading as "23 . 193".
+            HStack(alignment: .firstTextBaseline, spacing: DS.Space.s) {
+                Text(Self.tightened(s.total.formatted(), kern: -0.3 * DS.TextStyle.display.size))
+                    .dsText(.display, .number)
+                Text(s.total == 1 ? "image" : "images")
+                    .dsText(.body)
+                    .foregroundStyle(.secondary)
+            }
         }
+    }
+
+    /// A number with its group separators pulled in.
+    static func tightened(_ number: String, kern: CGFloat) -> AttributedString {
+        var out = AttributedString()
+        for ch in number {
+            var piece = AttributedString(String(ch))
+            if !ch.isNumber { piece.kern = kern }
+            out += piece
+        }
+        return out
     }
 
     func breakdown(_ title: String, _ values: [FacetValue], label: @escaping (String) -> String) -> some View {
@@ -48,21 +63,24 @@ struct LibrarySummaryView: View {
         let maxCount = max(1, top.map(\.count).max() ?? 1)
         return InfoTable(title: title) {
             ForEach(Array(top), id: \.value) { v in
-                HStack(spacing: DS.Space.s) {
+                HStack(alignment: .firstTextBaseline, spacing: DS.Space.s) {
                     Text(label(v.value)).lineLimit(1)
                     Spacer(minLength: DS.Space.s)
-                    Capsule()
-                        .fill(Color.accentColor.opacity(0.55))
-                        .frame(width: 72 * CGFloat(v.count) / CGFloat(maxCount), height: 4)
-                        .frame(width: 72, alignment: .trailing)
+                    // Neutral bar on a faint track: it shows proportion, not selection.
+                    ZStack(alignment: .trailing) {
+                        Capsule().fill(DS.Palette.dataTrack)
+                        Capsule().fill(DS.Palette.dataBar)
+                            .frame(width: max(2, DS.Size.dataBar * CGFloat(v.count) / CGFloat(maxCount)))
+                    }
+                    .frame(width: DS.Size.dataBar, height: DS.Size.dataBarHeight)
+                    .alignmentGuide(.firstTextBaseline) { $0[.bottom] + 3 }
                     Text(v.count.formatted())
                         .dsText(.label, .number)
-                        .foregroundStyle(.secondary)
                         .frame(minWidth: 52, alignment: .trailing)
                 }
                 .dsText(.label)
                 .frame(minHeight: DS.Size.control)
-                .overlay(alignment: .bottom) { Divider().overlay(DS.Palette.hairline) }
+                .overlay(alignment: .bottom) { Rectangle().fill(DS.Palette.rowRule).frame(height: 1) }
             }
         }
     }
@@ -73,7 +91,7 @@ struct LibrarySummaryView: View {
             if let range = dateRange { InfoRow(label: "Dates") { Text(range).dsText(.label, .number) } }
             InfoRow(label: "With prompt") { Text(s.withPrompt.formatted()).dsText(.label, .number) }
             if model.currentIsGhost {
-                InfoRow(label: "Ghost") { Text("Deleted when closed").foregroundStyle(DS.Tint.ghost) }
+                InfoRow(label: "Ghost") { Text("Temporary index").foregroundStyle(DS.Tint.ghost).help(GhostText.explanation) }
             }
             if isWholeLibrary, !model.currentIsGhost, let created = model.libraryCreatedAt {
                 InfoRow(label: "Added") { Text(created.formatted(date: .abbreviated, time: .omitted)).dsText(.label, .number) }

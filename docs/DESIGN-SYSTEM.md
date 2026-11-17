@@ -16,40 +16,79 @@ next decision starts from the same place instead of from taste.
 
 ## Type scale
 
-Base: Apple's macOS text styles (13 pt body). Typeface: Space Grotesk for words, Space Mono for
-numbers and data (switchable off in Preferences, then SF).
+Base: Apple's macOS text styles (13 pt body). Typeface: Space Grotesk for words (variable font,
+real weights 300 to 700), Space Mono for numbers and data (Regular and Bold); switchable off in
+Preferences, then SF. Measured facts behind the choices (round 3, 2026-11-17): the mono's x-height
+and cap height match the sans, but it is about 12% wider; its punctuation takes a full character cell;
+its line box is 1.48 em against 1.28 em.
 
-| Role (`DS.TextStyle`) | Size / weight | Used for | Why this size |
-|---|---|---|---|
-| `display` | 40 / regular, mono | the one big statistic (library count) | One display number per screen; large enough to read from across the desk; regular, not light (see rules). |
-| `title` | 20 / medium | page or view title in the header row | Between Apple Title 2 (17) and Title 1 (22); fits the 52 pt header row without crowding the filters. At 24 light it overpowered the ghost frame. |
-| `headline` | 13 / semibold | sheet and popover headings | Apple Headline. |
-| `reading` | 15 / regular | the prompt in the inspector | Text people actually read in sentences: Apple Title 3 size, comfortable measure at the inspector width. |
-| `body` | 13 / regular | sidebar rows, default copy | Apple macOS default size. |
-| `label` / `labelStrong` | 12 / regular, semibold | pills, inspector rows, footer, table values | Apple Callout; dense but legible. |
-| `meta` / `metaStrong` | 11 / regular, semibold | counts beside titles, notes, badges | Apple Subheadline; secondary information that must stay readable (the footer was too small at 10). |
-| `caption` / `captionStrong` | 10 / medium, semibold | section captions, key hints | Apple's minimum for macOS; never go below. |
+| Role (`DS.TextStyle`) | Size / weight | Mono size | Tracking | Used for | Why |
+|---|---|---|---|---|---|
+| `display` | 40 / regular (mono) | 40 | thousands separator pulled in by 0.3 em | the one big statistic | One display number per screen; the separator would otherwise read "23 . 193". Sits on one baseline with its unit. |
+| `title` | 20 / medium | n/a | -0.3 | page or view title | Between Apple Title 2 (17) and Title 1 (22); tighter tracking at larger size. |
+| `reading` | 15 / regular | n/a | 0 | the prompt | Text read in sentences; about 22 pt leading. |
+| `headline` | 13 / semibold (600) | n/a | 0 | popover and sheet titles, month headers | Real 600 gives a clear step over body. |
+| `body` | 13 / regular | n/a | 0 | sidebar rows, default copy | Apple macOS default. |
+| `label` / `labelStrong` | 12 / regular, semibold | 11.5 | 0 | pills, inspector rows, footer | Apple Callout. Mono 0.5 pt smaller evens the width. |
+| `meta` / `metaStrong` | 11 / regular, semibold | 10.5 | 0 | counts, notes, sidebar section titles | Apple Subheadline. |
+| `caption` | 10 / semibold, UPPERCASE | n/a | +0.6 | inspector section titles | Apple minimum; looser tracking for small caps. |
 
 Rules:
-- **Numbers and data are mono, words are sans.** Mono numbers align in columns and read as data.
-- **Avoid light weights** for UI text (Apple: they are hard to see when small). Regular, medium,
-  semibold, bold only. Large display numbers are the one place we could go lighter; we currently
-  do not.
-- **Secondary = lighter colour, not thinner or smaller.** Use `.secondary` / `.tertiary` colours
-  before shrinking text; never below 10 pt.
-- **Uppercase is for tiny section captions only**, with a little tracking, never for sentences.
-- **Line height:** keep Apple's pairing (13/16, 12/15, 11/14, 10/13); for three or more lines of
-  text do not tighten the leading.
-- **One title per view.** Do not repeat the same name in the window title, header and sidebar at
-  different sizes; the header row owns it.
+- **Numbers and data are mono, words are sans**, including inside one line: `RichText` sets
+  "23.193 indexed" with the number in mono and the word in sans.
+- **Levels are kept apart by colour and weight, not by more sizes.** 13, 12, 11 are close (ratio about
+  1.08); do not add 14 or 16.
+- **Avoid light weights** for UI text. Regular, medium, semibold, bold only.
+- **Secondary = secondary colour, not thinner or smaller.** Tertiary is never used for text (2.2:1).
+- **Uppercase only for the tiny `caption` role**, never sentences.
+- **One rule for tables:** the thing you compare is primary (counts, values); names and labels in the
+  inspector keep their colour as the label side.
+- **One title per view.** The header row owns it.
+
+## Colour
+
+Dark window `#0C0D0F`. Text uses the system levels so it adapts to Increase Contrast.
+
+| Token | Value | Use |
+|---|---|---|
+| text primary / secondary | system `.primary` (about 0.85) / `.secondary` (about 0.55); 14.0 / 6.3 on the window | values and titles / labels and notes |
+| `Palette.hairline` | white 0.09 | panel edges (decorative, exempt from the 3:1 rule) |
+| `Palette.rowRule` | white 0.10 | table row rules (one rule, never doubled) |
+| `Palette.controlStroke` | white 0.20 | outline of a control that is off (1.8:1; the chevron is the second cue) |
+| `Palette.dataBar` / `dataTrack` | white 0.45 / 0.08 | bars that show proportion: neutral, never the accent |
+| `Tint.activeText` | accent lightened 35% | text of an active filter (about 8:1) |
+| accent (system) | unchanged | selection and active state only, never data |
+| `Tint.midjourney` | #ADB8FF | source Midjourney, only where it is named |
+| `Tint.stableDiffusion` | #8ED6A0 | source Stable Diffusion |
+| `Tint.camera` | #7CCFE3 | source camera |
+| `Tint.ghost` | #F2B861 | ghosts only |
+| `Tint.warning` | #F57361 | offline / needs attention |
+| `Tint.fill` | 0.15 | opacity of every tinted fill |
+
+Rules: one accent at a time; a source tint appears only where that source is named; status shows by
+exception (the connected-drive icon is neutral, the offline one is coral); a group label that is not a
+control is secondary and only its icon carries the tint, so it never reads as an active filter.
 
 ## Spacing, size and shape
 
-- 4 pt base grid, 8 pt for layout (`DS.Space`: 4, 8, 12, 16, 24). 4 pt for tight internals (icon
+- 4 pt base grid, 8 pt for layout (`DS.Space`: 4, 8, 12, 16, 24; `iconGap` 6 between a small icon and its
+  label in a control, `pillInset` 10, `iconText` 10 in sidebar rows). 4 pt for tight internals (icon
   padding, pill padding); 8 and up between components.
 - Controls are 28 pt high (`DS.Size.control`); the header row is 52 pt; the footer 32 pt.
-- Radii: 4 / 6 / 8 for small things and thumbnails, 16 for glass panels. Capsules for pills.
+- Radii: 4 / 6 / 8 for small things and thumbnails, 16 for glass panels (all from `DS.Radius`). Capsules
+  for pills. Status badges are `DS.Size.badge` (22) high, whatever their kind.
 - Hairline borders at 9% white; one accent at a time; ghost tint (amber) only for ghosts.
+
+## Sidebar
+
+- Section titles all use one quiet style (`SidebarHeader`: `metaStrong`, secondary colour); only
+  the Ghosts title gets the amber tint and icon. A section title must say what the section *is*
+  ("Libraries", "Views", "Saved Searches"), never repeat a name that is already on screen (the
+  library name above the views was removed: it added nothing).
+- Rows use a fixed 20 pt icon column and a 10 pt gap (`DS.Space.iconText`) before the text, so
+  text lines up across rows and icons do not crowd it. Icon colour stays quieter than the text.
+- Primary things (libraries) and secondary things (views, saved searches) share the 13 pt body
+  size; hierarchy comes from the section titles and spacing, not from many sizes.
 
 ## Icons
 

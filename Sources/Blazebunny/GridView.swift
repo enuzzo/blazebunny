@@ -146,7 +146,11 @@ struct GridView: NSViewRepresentable {
             cell.itemID = item.id
             cell.fill = fill
             cell.setSource(item.source)
-            cell.view.toolTip = (item.relPath as NSString).lastPathComponent
+            let name = (item.relPath as NSString).lastPathComponent
+            cell.view.toolTip = name
+            cell.view.setAccessibilityElement(true)
+            cell.view.setAccessibilityRole(.image)
+            cell.view.setAccessibilityLabel(item.source.flatMap { $0 == .unknown ? nil : "\(name), \($0.title)" } ?? name)
             if let img = model.thumbnails.cached(item.id) {
                 cell.show(img)
                 return
@@ -231,6 +235,11 @@ final class GridCollectionView: NSCollectionView {
 
     override func keyDown(with event: NSEvent) {
         if event.keyCode == 36 { model?.openOriginal(); return }  // Return
+        if event.keyCode == 53, !selectionIndexPaths.isEmpty {  // Esc: back to the library summary
+            selectionIndexPaths = []
+            model?.selection = []
+            return
+        }
         super.keyDown(with: event)
     }
 
@@ -265,9 +274,9 @@ final class MonthHeader: NSView, NSCollectionViewElement {
     override init(frame: NSRect) {
         super.init(frame: frame)
         wantsLayer = true
-        title.font = .systemFont(ofSize: 13, weight: .semibold)
-        count.font = .monospacedDigitSystemFont(ofSize: 11, weight: .regular)
-        count.textColor = .tertiaryLabelColor
+        title.font = Typeface.nsFont(size: DS.TextStyle.headline.size, weight: DS.TextStyle.headline.weight, role: .text)
+        count.font = Typeface.nsFont(size: DS.TextStyle.meta.size - DS.TextStyle.meta.monoAdjust, weight: .regular, role: .number)
+        count.textColor = .secondaryLabelColor
         let stack = NSStackView(views: [title, count])
         stack.spacing = 8
         stack.alignment = .firstBaseline
@@ -333,7 +342,8 @@ final class ThumbCell: NSCollectionViewItem {
     func setSource(_ s: ItemSource?) {
         guard let s, s != .unknown else { badge.isHidden = true; return }
         badge.isHidden = false
-        badge.image = NSImage(systemSymbolName: s.symbol, accessibilityDescription: s.title)?
+        badge.setAccessibilityElement(false)  // the cell's own label already names the source
+        badge.image = NSImage(systemSymbolName: s.symbol, accessibilityDescription: nil)?
             .withSymbolConfiguration(.init(pointSize: 10, weight: .semibold))
         badge.toolTip = s.title
     }

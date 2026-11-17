@@ -49,10 +49,14 @@ struct FilterGroup<Content: View>: View {
     var body: some View {
         HStack(spacing: DS.Space.s) {
             Divider().frame(height: 20)
-            Label(title, systemImage: symbol)
-                .dsText(.metaStrong)
-                .foregroundStyle(tint)
-                .fixedSize()
+            // Not a control: only its icon carries the tint, so it never reads as an active filter.
+            Label {
+                Text(title).foregroundStyle(.secondary)
+            } icon: {
+                Image(systemName: symbol).foregroundStyle(tint)
+            }
+            .dsText(.metaStrong)
+            .fixedSize()
             content
         }
     }
@@ -98,23 +102,28 @@ struct FilterPill: View {
         let on = !vals.isEmpty
         HStack(spacing: 0) {
             Button {
-                model.openFacet = facet
-                model.loadFacet(facet)
+                // The pill toggles its popover: pressing it again closes it.
+                if model.openFacet == facet {
+                    model.openFacet = nil
+                } else {
+                    model.openFacet = facet
+                    model.loadFacet(facet)
+                }
             } label: {
                 HStack(spacing: 4) {
                     Text(on ? "\(title):" : title)
-                        .foregroundStyle(on ? tint.opacity(0.85) : .secondary)
+                        .foregroundStyle(.secondary)
                     if on {
                         Text(vals.count > 2 ? vals.prefix(2).joined(separator: ", ") + " +\(vals.count - 2)" : vals.joined(separator: ", "))
-                            .fontWeight(.medium)
-                            .foregroundStyle(tint)
+                            .dsText(.labelStrong)
+                            .foregroundStyle(tint == .accentColor ? DS.Tint.activeText : tint)
                             .lineLimit(1)
                     } else {
-                        Image(systemName: "chevron.down").font(.system(size: 8, weight: .semibold)).foregroundStyle(.tertiary)
+                        Image(systemName: "chevron.down").font(.system(size: DS.Size.microIcon, weight: .semibold)).foregroundStyle(.secondary)
                     }
                 }
-                .padding(.leading, DS.Space.m - 2)
-                .padding(.trailing, on ? DS.Space.xs : DS.Space.m - 2)
+                .padding(.leading, DS.Space.pillInset)
+                .padding(.trailing, on ? DS.Space.xs : DS.Space.pillInset)
                 .frame(height: DS.Size.control)
                 .contentShape(Rectangle())
             }
@@ -125,21 +134,21 @@ struct FilterPill: View {
             }
             if on {
                 Button { model.clear(facet) } label: {
-                    Image(systemName: "xmark").font(.system(size: 8, weight: .bold))
+                    Image(systemName: "xmark").font(.system(size: DS.Size.microIcon, weight: .bold))
                         .frame(width: 20, height: DS.Size.control)
                         .padding(.trailing, 4)
                         .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
-                .foregroundStyle(tint.opacity(0.8))
+                .foregroundStyle(.secondary)
                 .help("Clear \(title)")
                 .accessibilityLabel("Clear \(title)")
             }
         }
         .dsText(.label)
         .background {
-            Capsule().fill(on ? tint.opacity(0.15) : .clear)
-            Capsule().strokeBorder(on ? .clear : Color.primary.opacity(0.14))
+            Capsule().fill(on ? tint.opacity(DS.Tint.fill) : .clear)
+            Capsule().strokeBorder(on ? .clear : DS.Palette.controlStroke)
         }
     }
 }
@@ -197,6 +206,7 @@ struct FacetPopover: View {
             content
         }
         .frame(width: facet == .date ? 360 : 280)
+        .presentationBackground(DS.Palette.glassFillSolid)
     }
 
     @ViewBuilder var content: some View {
@@ -265,7 +275,10 @@ struct FacetPopover: View {
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
-        .background(on ? tint.opacity(0.10) : .clear, in: RoundedRectangle(cornerRadius: 6))
+        .accessibilityElement(children: .combine)
+        .accessibilityValue(on ? "Selected" : "Not selected")
+        .accessibilityAddTraits(on ? .isSelected : [])
+        .background(on ? tint.opacity(DS.Tint.fill) : .clear, in: RoundedRectangle(cornerRadius: DS.Radius.medium))
     }
 
     @ViewBuilder func glyph(_ value: String) -> some View {
@@ -381,7 +394,7 @@ struct DatePopoverContent: View {
     }
 }
 
-/// Name, colour and folder for a new or edited saved search.
+/// Name, color and folder for a new or edited saved search.
 struct SaveSearchSheet: View {
     let model: LibraryModel
     let existing: SavedSearch?
@@ -396,7 +409,7 @@ struct SaveSearchSheet: View {
             Form {
                 TextField("Name", text: $name, prompt: Text("e.g. Portraits, v7 raw"))
                 HStack {
-                    Text("Colour")
+                    Text("Color")
                     Spacer()
                     HStack(spacing: 6) {
                         ForEach(TagColor.allCases, id: \.self) { c in

@@ -48,6 +48,46 @@ enum DS {
     }
 }
 
+// MARK: - Type scale
+
+extension DS {
+    /// The app's type scale. Sizes follow Apple's macOS text styles (body 13,
+    /// callout 12, subheadline 11, minimum 10); hierarchy comes from weight and
+    /// colour as much as size, and light weights are kept for large display
+    /// numbers only. Rationale and sources: `docs/DESIGN-SYSTEM.md`.
+    struct TextStyle {
+        let size: CGFloat
+        let weight: Font.Weight
+
+        /// One big statistic (library count). The only place a light-looking, large size is used.
+        static let display = TextStyle(size: 40, weight: .regular)
+        /// A page or view title. 20 sits between Apple's Title 2 (17) and Title 1 (22) and fits the 52 pt header row.
+        static let title = TextStyle(size: 20, weight: .medium)
+        /// A sheet or popover heading.
+        static let headline = TextStyle(size: 13, weight: .semibold)
+        /// Default text: sidebar rows, general copy.
+        static let body = TextStyle(size: 13, weight: .regular)
+        /// Long text people actually read: the prompt in the inspector.
+        static let reading = TextStyle(size: 15, weight: .regular)
+        /// Controls and table rows: pills, inspector rows, footer.
+        static let label = TextStyle(size: 12, weight: .regular)
+        static let labelStrong = TextStyle(size: 12, weight: .semibold)
+        /// Secondary information: counts next to titles, notes.
+        static let meta = TextStyle(size: 11, weight: .regular)
+        static let metaStrong = TextStyle(size: 11, weight: .semibold)
+        /// Smallest text (the macOS minimum is 10): section captions, key hints.
+        static let caption = TextStyle(size: 10, weight: .medium)
+        static let captionStrong = TextStyle(size: 10, weight: .semibold)
+    }
+}
+
+extension View {
+    /// Sets text from the type scale. Words are sans; numbers and data are mono.
+    func dsText(_ style: DS.TextStyle, _ role: TextRole = .text) -> some View {
+        dsFont(style.size, weight: style.weight, role)
+    }
+}
+
 // MARK: - Dark glass language
 
 extension DS {
@@ -123,7 +163,7 @@ struct PillStyle: ButtonStyle {
 
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
-            .dsFont(12)
+            .dsText(.label)
             .foregroundStyle(isOn ? tint : .primary)
             .padding(.horizontal, DS.Space.m - 2)
             .frame(height: DS.Size.control)

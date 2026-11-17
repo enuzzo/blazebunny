@@ -45,12 +45,14 @@ Current plan: `docs/superpowers/plans/2026-11-16-blazebunny-m1.md`.
   cards and their label panels, popovers), always built from shared glass styles
   and tokens in `DesignSystem.swift`, never ad hoc in a view. **Never put glass
   or blur over the image grid itself**: thumbnails stay sharp, unfiltered and
-  uncovered. Large light titles, quiet grey secondary text, one accent at a
-  time. Library statistics may use the dot-matrix numeral style.
-- **Typeface:** words are Space Grotesk (sans), numbers and data are Space Mono.
-  Set text with `.dsFont(size, weight:, .text / .number)` from `Typeface.swift`, never
-  `.font(...)` with a literal size or `.monospacedDigit()`; it falls back to the system
-  font when the Preferences switch is off.
+  uncovered. Clear medium-weight titles (no light weights for UI text), quiet grey
+  secondary text, one accent at a time. Library statistics may use the dot-matrix numeral style.
+- **Typeface and type scale:** words are Space Grotesk (sans), numbers and data are Space
+  Mono. Set text only with `.dsText(.role, .text / .number)` (roles in `DS.TextStyle`:
+  display, title, headline, reading, body, label, meta, caption); never `.font(...)`, a
+  literal size, or `.monospacedDigit()`. It falls back to the system font when the
+  Preferences switch is off. Before adding or changing a size, read
+  `docs/DESIGN-SYSTEM.md` (the scale, why, and where to look) and update it with the reason.
 - **Motion** is short and purposeful (view changes: blur + slide + fade, about
   0.25–0.4 s). Respect Reduce Motion and Reduce Transparency: glass falls back
   to a solid fill. Never animate during fast scroll.

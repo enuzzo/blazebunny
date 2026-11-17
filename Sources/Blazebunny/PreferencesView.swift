@@ -12,7 +12,7 @@ struct PreferencesView: View {
                 Text(Typeface.isAvailable
                      ? "Space Grotesk for text, Space Mono for numbers. Turn off to use the system font."
                      : "The bundled fonts are not available in this build, so the system font is used.")
-                    .font(.callout)
+                    .dsText(.label)
                     .foregroundStyle(.secondary)
             }
         }
@@ -20,5 +20,6 @@ struct PreferencesView: View {
         .frame(width: 440)
         .fixedSize(horizontal: false, vertical: true)
         .preferredColorScheme(.dark)
+        .environment(\.brandTypeface, useBrandTypeface && Typeface.isAvailable)
     }
 }

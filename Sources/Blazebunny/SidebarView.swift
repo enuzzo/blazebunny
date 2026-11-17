@@ -7,9 +7,12 @@ struct SidebarView: View {
     @State private var renamingPath: String?
     @State private var draftName = ""
     @FocusState private var renameFocused: Bool
+    /// When the selection last changed, to tell "click to select" from "click on the selected row".
+    @State private var selectedSince = Date.distantPast
+    @State private var pendingRename: Task<Void, Never>?
 
     var selection: Binding<SidebarItem?> {
-        Binding(get: { model.sidebarSelection }, set: { model.selectSidebar($0) })
+        Binding(get: { model.sidebarSelection }, set: { selectedSince = Date(); model.selectSidebar($0) })
     }
 
     var body: some View {
@@ -121,11 +124,27 @@ struct SidebarView: View {
                         .strokeBorder(DS.Tint.ghost.opacity(0.7), style: StrokeStyle(lineWidth: 1, dash: [4, 3]))
                 }
             }
-            .onTapGesture(count: 2) { beginRename(lib) }
+            .onTapGesture(count: 2) { pendingRename?.cancel(); beginRename(lib) }
+            .simultaneousGesture(TapGesture().onEnded { slowClick(lib) })
+        }
+    }
+
+    /// Like Finder: a click on a row that was already selected starts renaming
+    /// after the double-click interval, unless another click follows.
+    func slowClick(_ lib: SavedLibrary) {
+        pendingRename?.cancel()
+        let wait = NSEvent.doubleClickInterval
+        guard renamingPath == nil,
+              model.sidebarSelection == .library(lib.path),
+              Date().timeIntervalSince(selectedSince) > wait + 0.1 else { return }
+        pendingRename = Task { @MainActor in
+            try? await Task.sleep(for: .seconds(wait + 0.15))
+            if !Task.isCancelled, renamingPath == nil { beginRename(lib) }
         }
     }
 
     func beginRename(_ lib: SavedLibrary) {
+        pendingRename?.cancel()
         draftName = lib.name
         renamingPath = lib.path
         renameFocused = true

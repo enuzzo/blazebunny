@@ -70,7 +70,7 @@ struct ContentView: View {
     var body: some View {
         // The font modifier reads the environment, so it sits inside `.environment`.
         content
-            .dsFont(13)
+            .dsText(.body)
             .environment(\.brandTypeface, useBrandTypeface && Typeface.isAvailable)
     }
 
@@ -195,14 +195,14 @@ struct PageHeader: View {
 
     var body: some View {
         HStack(alignment: .firstTextBaseline, spacing: DS.Space.s) {
-            if isGhost { GhostIcon(size: 22).alignmentGuide(.firstTextBaseline) { $0[.bottom] - 3 } }
+            if isGhost { GhostIcon(size: 18).alignmentGuide(.firstTextBaseline) { $0[.bottom] - 2 } }
             Text(title)
-                .dsFont(24, weight: .light)
+                .dsText(.title)
                 .lineLimit(1)
                 .truncationMode(.middle)
             if !subtitle.isEmpty {
                 Text(subtitle)
-                    .dsFont(12, .number)
+                    .dsText(.meta, .number)
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
                     .fixedSize()
@@ -231,7 +231,7 @@ struct StatusBar: View {
                 }
             }
         }
-        .dsFont(12, .number)
+        .dsText(.label, .number)
         .foregroundStyle(.secondary)
         .padding(.horizontal, DS.Space.l)
         .frame(height: DS.Size.statusBar)

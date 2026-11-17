@@ -14,7 +14,7 @@ struct InspectorView: View {
                     PreviewImage(model: model, detail: d)
                     if model.selection.count > 1 {
                         Text("\(model.selection.count) selected — copy puts one prompt per line")
-                            .font(.caption).foregroundStyle(.secondary)
+                            .dsText(.meta).foregroundStyle(.secondary)
                     }
                     if let m = d.metadata {
                         header(m)
@@ -44,7 +44,7 @@ struct InspectorView: View {
     func header(_ m: ItemMetadata) -> some View {
         HStack(spacing: 8) {
             Label(m.source.title, systemImage: m.source.symbol)
-                .font(.caption.weight(.semibold))
+                .dsText(.metaStrong)
                 .padding(.horizontal, 8)
                 .frame(height: 22)
                 .background(sourceTint(m.source).opacity(0.15), in: Capsule())
@@ -53,7 +53,7 @@ struct InspectorView: View {
                 .help("Show only \(m.source.title) images")
             Spacer()
             if m.promptText != nil || m.camera != nil {
-                Text("Click a value to filter").font(.caption).foregroundStyle(.tertiary)
+                Text("Click a value to filter").dsText(.meta).foregroundStyle(.tertiary)
             }
         }
     }
@@ -70,13 +70,13 @@ struct InspectorView: View {
     func promptSection(_ m: ItemMetadata, _ text: String) -> some View {
         VStack(alignment: .leading, spacing: 12) {
             Text(text)
-                .dsFont(15)
+                .dsText(.reading)
                 .lineSpacing(3)
                 .textSelection(.enabled)
                 .fixedSize(horizontal: false, vertical: true)
             HStack(spacing: 8) {
                 Button { model.copy(.prompt) } label: {
-                    HStack(spacing: 6) { Text("Copy Prompt"); Text("⌘C").font(.caption2).opacity(0.6) }
+                    HStack(spacing: 6) { Text("Copy Prompt"); Text("⌘C").dsText(.caption).opacity(0.6) }
                 }
                 .buttonStyle(.borderedProminent)
                 if m.prompt != nil {
@@ -87,7 +87,7 @@ struct InspectorView: View {
             if let neg = m.generator?.negativePrompt, !neg.isEmpty {
                 VStack(alignment: .leading, spacing: 4) {
                     SectionTitle("Negative prompt")
-                    Text(neg).font(.callout).foregroundStyle(.secondary).textSelection(.enabled)
+                    Text(neg).dsText(.label).foregroundStyle(.secondary).textSelection(.enabled)
                 }
             }
         }
@@ -114,7 +114,7 @@ struct InspectorView: View {
                 }
             }
             if let job = p.jobID {
-                InfoRow(label: "Job ID") { Text(job).font(.caption.monospaced()).textSelection(.enabled).lineLimit(1).truncationMode(.middle) }
+                InfoRow(label: "Job ID") { Text(job).dsText(.meta, .number).textSelection(.enabled).lineLimit(1).truncationMode(.middle) }
             }
         }
     }
@@ -134,7 +134,7 @@ struct InspectorView: View {
             if let s = g.steps { InfoRow(label: "Steps") { Text("\(s)").monospacedDigit() } }
             if let c = g.cfg { InfoRow(label: "CFG") { Text(CameraInfo.trim(c)).monospacedDigit() } }
             if let s = g.sampler { InfoRow(label: "Sampler") { Text(s) } }
-            if let s = g.seed { InfoRow(label: "Seed") { Text(s).font(.callout.monospaced()).textSelection(.enabled) } }
+            if let s = g.seed { InfoRow(label: "Seed") { Text(s).dsText(.label, .number).textSelection(.enabled) } }
         }
     }
 
@@ -152,7 +152,7 @@ struct InspectorView: View {
             if let date = m?.createdAt {
                 InfoRow(label: "Created") {
                     Text(date.formatted(date: .abbreviated, time: .shortened)).monospacedDigit()
-                    Text(sourceNote(m!.createdSource)).font(.caption).foregroundStyle(.tertiary)
+                    Text(sourceNote(m!.createdSource)).dsText(.meta).foregroundStyle(.tertiary)
                 }
             }
             if let a = m?.author, !a.isEmpty { InfoRow(label: "Author") { Text(a) } }
@@ -167,7 +167,7 @@ struct InspectorView: View {
                 Text(ByteCountFormatter.string(fromByteCount: d.size, countStyle: .file)).foregroundStyle(.secondary)
             }
             InfoRow(label: "Name") {
-                Text((d.relPath as NSString).lastPathComponent).font(.callout.monospaced()).textSelection(.enabled)
+                Text((d.relPath as NSString).lastPathComponent).dsText(.label, .number).textSelection(.enabled)
                     .lineLimit(1).truncationMode(.middle)
             }
         }
@@ -182,7 +182,7 @@ struct InspectorView: View {
             .disabled(!model.isOnline)
             if !model.isOnline {
                 Label("Disk not connected — the original is not reachable.", systemImage: "externaldrive.badge.xmark")
-                    .font(.caption).foregroundStyle(.orange)
+                    .dsText(.meta).foregroundStyle(.orange)
             }
         }
     }
@@ -206,7 +206,7 @@ struct SectionTitle: View {
     let text: String
     init(_ text: String) { self.text = text }
     var body: some View {
-        Text(text.uppercased()).font(.caption2.weight(.semibold)).foregroundStyle(.secondary).tracking(0.4)
+        Text(text.uppercased()).dsText(.captionStrong).foregroundStyle(.secondary).tracking(0.4)
     }
 }
 
@@ -231,7 +231,7 @@ struct InfoRow<Value: View>: View {
             HStack(spacing: 6) { value }
             Spacer(minLength: 0)
         }
-        .dsFont(12)
+        .dsText(.label)
         .frame(minHeight: DS.Size.control)
         .overlay(alignment: .bottom) { Divider() }
     }
@@ -253,7 +253,7 @@ struct FilterLink: View {
     var body: some View {
         Button(action: action) {
             Text(text)
-                .font(mono ? .callout.monospaced() : .callout)
+                .dsText(.label, mono ? .number : .text)
                 .lineLimit(1)
                 .truncationMode(.middle)
                 .padding(.horizontal, 6)

@@ -50,7 +50,7 @@ struct FilterGroup<Content: View>: View {
         HStack(spacing: DS.Space.s) {
             Divider().frame(height: 20)
             Label(title, systemImage: symbol)
-                .font(.caption.weight(.semibold))
+                .dsText(.metaStrong)
                 .foregroundStyle(tint)
                 .fixedSize()
             content
@@ -136,7 +136,7 @@ struct FilterPill: View {
                 .accessibilityLabel("Clear \(title)")
             }
         }
-        .font(.callout)
+        .dsText(.label)
         .background {
             Capsule().fill(on ? tint.opacity(0.15) : .clear)
             Capsule().strokeBorder(on ? .clear : Color.primary.opacity(0.14))
@@ -185,10 +185,10 @@ struct FacetPopover: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             HStack {
-                Text(title).font(.headline)
+                Text(title).dsText(.headline)
                 Spacer()
                 Text(facet == .param ? "all of" : facet == .date ? "embedded date, else file date" : "any of")
-                    .font(.caption).foregroundStyle(.secondary)
+                    .dsText(.meta).foregroundStyle(.secondary)
             }
             .padding(.horizontal, 12)
             .padding(.top, 12)
@@ -236,7 +236,7 @@ struct FacetPopover: View {
 
     func section(_ title: String, _ values: [FacetValue]) -> some View {
         VStack(alignment: .leading, spacing: 0) {
-            Text(title).font(.caption.weight(.semibold)).foregroundStyle(.secondary)
+            Text(title).dsText(.metaStrong).foregroundStyle(.secondary)
                 .padding(.horizontal, 8).padding(.vertical, 4)
             ForEach(values, id: \.value) { v in row(v) }
         }
@@ -250,14 +250,14 @@ struct FacetPopover: View {
             HStack(spacing: 10) {
                 Image(systemName: on ? "checkmark.square.fill" : "square")
                     .foregroundStyle(on ? tint : .secondary)
-                    .font(.system(size: 14))
+                    .dsText(.body)
                 glyph(v.value)
                 Text(FacetLabel.label(facet, v.value))
-                    .font(facet == .param || (facet == .shape && v.value.hasPrefix("r:")) ? .callout.monospaced() : .callout)
+                    .dsText(.label, facet == .param || (facet == .shape && v.value.hasPrefix("r:")) ? .number : .text)
                     .lineLimit(1)
                 Spacer(minLength: 8)
                 Text(v.count.formatted())
-                    .font(.caption.monospacedDigit())
+                    .dsText(.meta, .number)
                     .foregroundStyle(.secondary)
             }
             .padding(.horizontal, DS.Space.s)
@@ -302,9 +302,9 @@ struct DatePopoverContent: View {
             } else {
                 bars
                 HStack {
-                    Text(label(months.first!.month)).font(.caption2)
+                    Text(label(months.first!.month)).dsText(.caption)
                     Spacer()
-                    Text(label(months.last!.month)).font(.caption2)
+                    Text(label(months.last!.month)).dsText(.caption)
                 }
                 .foregroundStyle(.secondary)
             }
@@ -392,7 +392,7 @@ struct SaveSearchSheet: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
-            Text(existing == nil ? "Save Search" : "Edit Saved Search").font(.headline)
+            Text(existing == nil ? "Save Search" : "Edit Saved Search").dsText(.headline)
             Form {
                 TextField("Name", text: $name, prompt: Text("e.g. Portraits, v7 raw"))
                 HStack {
@@ -422,7 +422,7 @@ struct SaveSearchSheet: View {
             }
             .formStyle(.columns)
             if existing == nil {
-                Text(summary).font(.caption).foregroundStyle(.secondary).lineLimit(3)
+                Text(summary).dsText(.meta).foregroundStyle(.secondary).lineLimit(3)
             }
             HStack {
                 Spacer()

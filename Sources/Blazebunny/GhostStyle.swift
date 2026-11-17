@@ -49,7 +49,7 @@ struct GhostBadge: View {
         HStack(spacing: DS.Space.xs + 2) {
             GhostIcon(size: 14)
             Text("Ghost · nothing is kept")
-                .dsFont(11, weight: .medium)
+                .dsText(.metaStrong)
                 .foregroundStyle(DS.Tint.ghost)
         }
         .padding(.horizontal, DS.Space.s + 2)

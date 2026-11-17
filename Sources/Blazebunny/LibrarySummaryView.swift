@@ -32,13 +32,13 @@ struct LibrarySummaryView: View {
                 GhostBadge().padding(.bottom, DS.Space.s)
             }
             Text(model.viewTitle)
-                .dsFont(12)
+                .dsText(.label)
                 .foregroundStyle(.secondary)
                 .lineLimit(1)
             Text(s.total.formatted())
-                .dsFont(44, .number)
+                .dsText(.display, .number)
             Text(s.total == 1 ? "image" : "images")
-                .dsFont(12)
+                .dsText(.meta)
                 .foregroundStyle(.secondary)
         }
     }
@@ -56,11 +56,11 @@ struct LibrarySummaryView: View {
                         .frame(width: 72 * CGFloat(v.count) / CGFloat(maxCount), height: 4)
                         .frame(width: 72, alignment: .trailing)
                     Text(v.count.formatted())
-                        .dsFont(12, .number)
+                        .dsText(.label, .number)
                         .foregroundStyle(.secondary)
                         .frame(minWidth: 52, alignment: .trailing)
                 }
-                .dsFont(12)
+                .dsText(.label)
                 .frame(minHeight: DS.Size.control)
                 .overlay(alignment: .bottom) { Divider().overlay(DS.Palette.hairline) }
             }
@@ -69,14 +69,14 @@ struct LibrarySummaryView: View {
 
     var details: some View {
         InfoTable(title: "Details") {
-            InfoRow(label: "Size") { Text(ByteCountFormatter.string(fromByteCount: s.totalBytes, countStyle: .file)).dsFont(12, .number) }
-            if let range = dateRange { InfoRow(label: "Dates") { Text(range).dsFont(12, .number) } }
-            InfoRow(label: "With prompt") { Text(s.withPrompt.formatted()).dsFont(12, .number) }
+            InfoRow(label: "Size") { Text(ByteCountFormatter.string(fromByteCount: s.totalBytes, countStyle: .file)).dsText(.label, .number) }
+            if let range = dateRange { InfoRow(label: "Dates") { Text(range).dsText(.label, .number) } }
+            InfoRow(label: "With prompt") { Text(s.withPrompt.formatted()).dsText(.label, .number) }
             if model.currentIsGhost {
                 InfoRow(label: "Ghost") { Text("Deleted when closed").foregroundStyle(DS.Tint.ghost) }
             }
             if isWholeLibrary, !model.currentIsGhost, let created = model.libraryCreatedAt {
-                InfoRow(label: "Added") { Text(created.formatted(date: .abbreviated, time: .omitted)).dsFont(12, .number) }
+                InfoRow(label: "Added") { Text(created.formatted(date: .abbreviated, time: .omitted)).dsText(.label, .number) }
             }
             if isWholeLibrary, let path = folderPath {
                 InfoRow(label: "Folder") {

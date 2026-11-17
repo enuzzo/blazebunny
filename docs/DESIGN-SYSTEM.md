@@ -146,6 +146,31 @@ session sidebar, without becoming a rainbow. Direction:
   material (solid window colour).
 - Chevron turns with a short spring (off with Reduce Motion).
 
+## Themes (accent)
+
+Owner (2026-11-17): offer a small choice of accents in Preferences, because people look at many photos for
+a long time and like to change or go monochrome. Deliberately NOT full theming: one accent plus one switch.
+A theme is `accent`, `onAccent` (text and icons on an accent fill), `accentText` (the accent as text on the
+dark glass) and `coloredIcons` (category icons tinted or neutral). Everything that says "accent" today
+(selection ring, filled buttons, selected sidebar row, active filter pills, date histogram) reads the theme
+accent instead of the system one; sources, ghost (amber) and warning (coral) keep their fixed colours, so no
+theme may use amber or coral as its accent.
+
+Rules: every accent passes 3:1 as a fill against the glass and 4.5:1 as text (`accentText`); a bright accent
+needs a dark `onAccent` (white on lime is only 1.9:1). Curated, not a free colour picker.
+
+| Theme | accent | onAccent | accentText | Notes |
+|---|---|---|---|---|
+| **System** (default) | macOS accent colour | white | accent lightened 35% | follows System Settings, as today |
+| **Neon** | `#7CCF00` lime (Griddo's dark-mode primary) | `#192E03` (7.5:1 on the fill) | `#9AE600` (about 12:1) | optional second accent magenta `#F6339A` (5.4:1) reserved for the tray and compare highlights |
+| **Graphite** (monochrome) | white 0.85 on a white 0.16 fill | `#0C0D0F` | white 0.9 | `coloredIcons` off: the photos are the only colour |
+| **Violet** | `#A78BFA` | `#1B1233` | `#C4B5FD` | to verify against the library tint |
+| **Rose** | `#F472B6` | `#2A0E1E` | `#F9A8D4` | to verify against Neon's magenta |
+
+Source of Neon: Griddo (`apps/web/src/index.css`, oklch tokens converted to sRGB: dark primary
+`oklch(0.768 0.233 130.85)`, light `oklch(0.841 0.238 128.85)`, magenta chart `oklch(0.656 0.241 354.308)`).
+More themes can be added as one row each.
+
 ## Actions and menus
 
 Every action has one name and one icon, defined once in `Actions.swift` (`AppAction`) and reused by the

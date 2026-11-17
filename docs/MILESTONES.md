@@ -332,3 +332,12 @@ Known problems to fix first (owner and measurements):
       `kind` and `file_name`, main-thread work, animation cost, launch time.
 - [ ] Code quality: remove literal sizes/spacings/radii outside `DS`, dead code, duplicated logic; keep
       tests green and add the tests listed as missing in review round 1.
+
+## Themes (owner, 2026-11-17)
+
+- [ ] Preferences > Appearance: **Accent theme** with System (default), Neon (Griddo's lime and magenta),
+      Graphite (monochrome), Violet, Rose, and a **Colored icons** switch. Spec in `docs/DESIGN-SYSTEM.md`
+      ("Themes (accent)"). Small work, after the speed pass: one theme value read in one place
+      (replaces `Color.accentColor` and `NSColor.controlAccentColor` in about a dozen spots), the grid's
+      AppKit selection ring wired separately, fills use a per-theme `onAccent` (a bright accent needs dark
+      text). No full theming (no light/dark or font per theme). More themes later, one row each.

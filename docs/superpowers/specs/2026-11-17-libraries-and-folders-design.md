@@ -74,9 +74,12 @@ collections, one level of groups) | **Tray** dock | Add Folder and the ghost but
   library. Dashed amber styling stays (M4).
 - **Offline disk:** the folder dims with a coral drive icon; its images stay browsable from the local index
   and thumbnails; originals and rescans wait. **Moved folder:** "Locate Folder…" re-points the index.
-- **Nesting:** folders unlimited; groups one level; libraries flat.
+- **Nesting:** folders unlimited; groups one level; libraries are reorderable by drag and can be put in
+  library groups (one level), owner request 2026-11-17 (this changes "libraries flat" in Fable's model).
+  Group in the switcher: a heading row that holds libraries; drag a library onto a group to file it,
+  between rows to reorder; a group can be collapsed and renamed; ghosts stay in their own group.
 
-What we will NOT build: a merged all-libraries grid, nested libraries, a ghost folder inside a normal library,
+What we will NOT build: a merged all-libraries grid, libraries nested inside libraries, a ghost folder inside a normal library,
 re-parenting or renaming subfolders in the app, nested groups, custom icons, multiple trays, a sidebar edit
 mode, cross-library collections (for now), tags, ratings, collections mixing rules with manual picks,
 per-folder exclude rules.

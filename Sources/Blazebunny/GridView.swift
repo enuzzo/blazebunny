@@ -249,19 +249,28 @@ final class GridCollectionView: NSCollectionView {
             selectionIndexPaths = [path]
             delegate?.collectionView?(self, didSelectItemsAt: [path])
         }
+        // Groups, in the order people reach for them: copy, then open and locate.
         let menu = NSMenu()
-        menu.addItem(withTitle: "Copy Prompt", action: #selector(copyPrompt), keyEquivalent: "").target = self
-        menu.addItem(withTitle: "Copy Text Only", action: #selector(copyText), keyEquivalent: "").target = self
-        menu.addItem(withTitle: "Copy Parameters", action: #selector(copyParams), keyEquivalent: "").target = self
+        func add(_ action: AppAction, _ selector: Selector, key: String = "") {
+            let item = menu.addItem(withTitle: action.title, action: selector, keyEquivalent: key)
+            item.target = self
+            item.image = action.nsImage
+        }
+        add(.copyPrompt, #selector(copyPrompt), key: "c")
+        add(.copyText, #selector(copyText))
+        add(.copyParameters, #selector(copyParams))
+        add(.copyPath, #selector(copyPath))
         menu.addItem(.separator())
-        menu.addItem(withTitle: "Show in Finder", action: #selector(reveal), keyEquivalent: "").target = self
-        menu.addItem(withTitle: "Open", action: #selector(openOriginal), keyEquivalent: "").target = self
+        add(.showInFinder, #selector(reveal))
+        add(.openDefault, #selector(openOriginal))
+        // Add to Tray / Compare / Collection join here when those features exist.
         return menu
     }
 
     @objc func copyPrompt() { model?.copy(.prompt) }
     @objc func copyText() { model?.copy(.text) }
     @objc func copyParams() { model?.copy(.parameters) }
+    @objc func copyPath() { model?.copyPath() }
     @objc func reveal() { model?.revealInFinder() }
     @objc func openOriginal() { model?.openOriginal() }
 }

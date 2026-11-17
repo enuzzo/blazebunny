@@ -130,6 +130,8 @@ final class LibraryModel {
     var selection: [Int64] = [] { didSet { loadDetail() } }
     private(set) var detail: ItemDetail?
     private(set) var progress: ScanProgress?
+    /// Set when a scan stopped with an error, so the footer says so instead of showing a stale status.
+    private(set) var scanFailure: String?
     private(set) var counts = LibraryIndex.Counts()
     /// What the current view holds (the whole library when no filter is on).
     private(set) var summary = LibrarySummary()
@@ -341,6 +343,12 @@ final class LibraryModel {
         } else if let i = ghosts.firstIndex(where: { $0.path == lib.path }) {
             ghosts[i].displayName = name
         }
+    }
+
+    /// Reorders the saved libraries (drag in the sidebar) and remembers the order.
+    func moveLibraries(from: IndexSet, to: Int) {
+        saved.move(fromOffsets: from, toOffset: to)
+        persist()
     }
 
     func remove(_ lib: SavedLibrary) {
@@ -640,6 +648,7 @@ final class LibraryModel {
         guard let lib = library else { return }
         let scanner = FolderScanner(root: lib.root, index: lib.index, thumbnails: lib.thumbnails, ioConcurrency: 2)
         self.scanner = scanner
+        scanFailure = nil
         thumbnails.scanner = scanner
         scanTask = Task.detached(priority: .utility) { [weak self] in
             do {
@@ -653,7 +662,8 @@ final class LibraryModel {
             } catch {
                 await MainActor.run {
                     guard let self, self.scanner === scanner else { return }
-                    self.errorMessage = "Scan stopped: \(error.localizedDescription)"
+                    self.progress = nil
+                    self.scanFailure = error.localizedDescription
                 }
             }
         }
@@ -761,6 +771,15 @@ final class LibraryModel {
             try? await Task.sleep(for: .seconds(1.4))
             if self?.copiedKind == kind { self?.copiedKind = nil }
         }
+    }
+
+    /// Copies the full path of each selected image, one per line.
+    func copyPath() {
+        let byID = Dictionary(uniqueKeysWithValues: items.map { ($0.id, $0) })
+        let paths = selection.compactMap { byID[$0].flatMap { originalURL($0.relPath)?.path } }
+        guard !paths.isEmpty else { NSSound.beep(); return }
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(paths.joined(separator: "\n"), forType: .string)
     }
 
     func revealInFinder() {

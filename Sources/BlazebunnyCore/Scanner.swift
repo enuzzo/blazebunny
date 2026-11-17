@@ -67,7 +67,11 @@ public final class FolderScanner: @unchecked Sendable {
         let known = try index.knownFiles()
         var seen = Set<String>()
         var batch: [FileRecord] = []
-        let listing = enumerate()
+        // The listing reports how many entries it has seen, so the status never sits on "0".
+        let listing = enumerate { seenCount in
+            p.total = seenCount
+            report()
+        }
         try index.upsertDirectories(listing.dirs)
         for record in listing.records {
             if isCancelled { return }
@@ -184,7 +188,7 @@ public final class FolderScanner: @unchecked Sendable {
 
     /// Lists supported files in directory order, skipping hidden files and packages.
     /// `complete` is false when any directory could not be read.
-    func enumerate() -> (records: [FileRecord], dirs: [String], complete: Bool) {
+    func enumerate(onProgress: (Int) -> Void = { _ in }) -> (records: [FileRecord], dirs: [String], complete: Bool) {
         let keys: [URLResourceKey] = [.isRegularFileKey, .isDirectoryKey, .fileSizeKey, .contentModificationDateKey]
         let hadError = Locked(false)
         guard let e = FileManager.default.enumerator(at: root, includingPropertiesForKeys: keys,
@@ -199,7 +203,10 @@ public final class FolderScanner: @unchecked Sendable {
             if path.hasPrefix(rootPath) { path = String(path.dropFirst(rootPath.count)) }
             return path.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
         }
+        var entries = 0
         for case let url as URL in e {
+            entries += 1
+            if entries % 1000 == 0 { onProgress(entries) }
             if (try? url.resourceValues(forKeys: [.isDirectoryKey]))?.isDirectory == true {
                 let p = relative(url)
                 if !p.isEmpty { dirs.append(p) }

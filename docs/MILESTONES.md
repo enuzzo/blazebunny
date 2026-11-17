@@ -273,3 +273,56 @@ ghost signals, 28 pt rows, 92 pt label column, no glass on the inspector.
       folder); apply its design when it arrives.
 - [ ] Icons: demo of five free families made (Phosphor regular and duotone, Lucide, Tabler, Iconoir);
       owner to choose, then bundle with licences in NOTICE.
+
+## Owner notes, 2026-11-17 (evening)
+
+- [x] Libraries can be reordered by dragging in the sidebar (order remembered). Quick version for the
+      current flat list.
+- [ ] Group libraries (one level) with drag and drop, collapse and rename; lives in the library switcher
+      of stage 2 (design updated).
+- [x] The scan status no longer sits on "Listing files… 0": the listing reports its count every 1000
+      entries; a scan that stops with an error now says "Scan stopped · Rescan with ⌘R" in the footer
+      instead of leaving a stale status. Measured listing of the 23k real folder: 1.1 s (release).
+      Likely cause of the stuck status seen by the owner: two copies of the app scanning the same
+      library; to be re-checked in the speed review.
+- [x] ~~Double click opens the original~~ reverted by the owner: a double click must NOT open Preview. It will open the full-screen viewer (M6); until then it does nothing. Opening in another app is a context-menu choice.
+- [x] Inspector preview: sharp previews cached (48) and the wait before decoding cut from 250 to 90 ms.
+      Preview source: the cached 512 px thumbnail at once, then the real file downsampled to 1200 px
+      (slow on an external disk; the speed review should look at prefetching neighbours).
+
+## Right-click menu and shared actions (owner, 2026-11-17)
+
+- [x] Grid context menu organized in two groups with icons: **Copy** (Prompt, Text Only, Parameters,
+      Path) then **Open and locate** (Show in Finder, Open in Default App). One list of actions with
+      one name and one icon each (`Actions.swift`, `AppAction`) is shared by the grid menu and the
+      sidebar menus, so the same action looks the same everywhere; the icons move to Iconoir later with
+      no change at the call sites.
+- [ ] Add to the menu when the features exist: **Add to Tray**, **Add to Compare**, **Add to
+      Collection**, and "Open With" (a list of apps). Use the same `AppAction` list and icons in the
+      inspector buttons, the menu bar and the toolbar.
+- [ ] Return key: currently "open in default app"; revisit with the viewer (Space and double click
+      open the viewer, a menu key for Open in Default App).
+
+## Speed and quality pass, before the viewer (owner, 2026-11-17)
+
+Order decided: speed and quality pass first (the viewer's ultra-fast navigation needs the same
+prefetch and caching), then the full-screen viewer (M6), then the remaining stages.
+
+Known problems to fix first (owner and measurements):
+- [x] Animated backdrops removed (owner: speed beats flourish): the window light and the sidebar glow are
+      now still gradients. Idle CPU went from **9 to 16% to 0.0%** (measured with `ps`).
+- [ ] **Stutter when opening and closing the sidebars** (owner): re-check after the backdrop change; the
+      other suspect is a full grid relayout and reload on every width change.
+- [ ] **Dragging libraries to reorder is inconsistent** (owner): the `.onMove` in the sidebar list competes
+      with the selection, the double-tap rename and the slow-click gestures; make drag reliable (and ready
+      for grouping libraries in stage 2).
+- [ ] Inspector preview is slow on an external disk (thumbnail first, then a 1200 px decode of the real
+      file): prefetch the neighbours of the selection, keep more sharp previews, consider larger stored
+      thumbnails.
+- [ ] Review the whole app against the speed budgets in the libraries design (scroll, scope change,
+      filter change, launch, memory), fix, and record before/after numbers. Include: text search on a
+      very common word at 100k (130 ms vs 100 budget), no full grid reload when only thumbnails change,
+      thumbnail reads without the shared index lock (`pread`, locations in the browse item), indexes on
+      `kind` and `file_name`, main-thread work, animation cost, launch time.
+- [ ] Code quality: remove literal sizes/spacings/radii outside `DS`, dead code, duplicated logic; keep
+      tests green and add the tests listed as missing in review round 1.

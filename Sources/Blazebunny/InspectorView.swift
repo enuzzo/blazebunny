@@ -292,6 +292,13 @@ struct FilterLink: View {
 
 /// The thumbnail at once, upgraded to a larger image from the original when
 /// the disk is connected. Tall images are capped so the details stay visible.
+/// Sharp previews already decoded, so going back to an image shows it at once.
+@MainActor private let previewCache: NSCache<NSNumber, NSImage> = {
+    let c = NSCache<NSNumber, NSImage>()
+    c.countLimit = 48
+    return c
+}()
+
 struct PreviewImage: View {
     let model: LibraryModel
     let detail: ItemDetail
@@ -317,12 +324,13 @@ struct PreviewImage: View {
 
     func load() async {
         let id = detail.id
+        if let sharp = previewCache.object(forKey: NSNumber(value: id)) { image = sharp; return }
         image = model.thumbnails.cached(id)
         if image == nil {
             image = await withCheckedContinuation { cont in model.thumbnails.load(id) { cont.resume(returning: $0) } }
         }
         guard model.isOnline, !detail.kind.isVideo, let url = model.originalURL(detail.relPath) else { return }
-        try? await Task.sleep(for: .milliseconds(250))  // skip while arrowing quickly through the grid
+        try? await Task.sleep(for: .milliseconds(90))  // skip while arrowing quickly through the grid
         if Task.isCancelled { return }
         let big: CGImage? = await Task.detached(priority: .userInitiated) {
             guard let src = CGImageSourceCreateWithURL(url as CFURL, [kCGImageSourceShouldCache: false] as CFDictionary) else { return nil }
@@ -332,6 +340,10 @@ struct PreviewImage: View {
                 kCGImageSourceThumbnailMaxPixelSize: 1200,
             ] as CFDictionary)
         }.value
-        if !Task.isCancelled, let big { image = NSImage(cgImage: big, size: NSSize(width: big.width, height: big.height)) }
+        if !Task.isCancelled, let big {
+            let sharp = NSImage(cgImage: big, size: NSSize(width: big.width, height: big.height))
+            previewCache.setObject(sharp, forKey: NSNumber(value: id))
+            image = sharp
+        }
     }
 }

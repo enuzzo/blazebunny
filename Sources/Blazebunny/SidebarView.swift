@@ -27,12 +27,14 @@ struct SidebarView: View {
                         .tag(SidebarItem.library(lib.path))
                         .help(lib.path)
                         .contextMenu {
-                            Button("Rename…") { beginRename(lib) }
-                            Button("Show in Finder") { NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: lib.path)]) }
+                            actionButton(.rename) { beginRename(lib) }
+                            actionButton(.showInFinder) { NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: lib.path)]) }
                             Divider()
-                            Button("Forget Library…", role: .destructive) { pendingForget = lib }
+                            actionButton(.forgetLibrary, role: .destructive) { pendingForget = lib }
                         }
                 }
+                // Drag a library up or down to put the libraries in the order you want.
+                .onMove { model.moveLibraries(from: $0, to: $1) }
             } header: {
                 SidebarHeader("Libraries")
             }
@@ -44,9 +46,9 @@ struct SidebarView: View {
                             .tag(SidebarItem.library(lib.path))
                             .help("\(lib.path)\n\(GhostText.explanation)")
                             .contextMenu {
-                                Button("Rename…") { beginRename(lib) }
+                                actionButton(.rename) { beginRename(lib) }
                                 Divider()
-                                Button("Close Ghost", role: .destructive) { model.closeGhost(lib) }
+                                actionButton(.closeGhost, role: .destructive) { model.closeGhost(lib) }
                             }
                     }
                 } header: {
@@ -232,12 +234,12 @@ struct SidebarView: View {
             .sidebarRow(selected: model.sidebarSelection == .saved(s.id))
             .tag(SidebarItem.saved(s.id))
             .contextMenu {
-                Button("Edit…") { editing = s }
+                actionButton(.editSavedSearch) { editing = s }
                 if model.activeSavedSearch?.id == s.id {
                     Button("Update with Current Filters") { model.updateSavedSearch(s.id) }
                 }
                 Divider()
-                Button("Delete…", role: .destructive) { pendingDelete = s }
+                actionButton(.deleteSavedSearch, role: .destructive) { pendingDelete = s }
             }
         }
         .onMove { from, to in model.moveSavedSearches(in: folder, from: from, to: to) }

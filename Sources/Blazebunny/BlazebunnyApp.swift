@@ -269,6 +269,11 @@ struct StatusBar: View {
                 if let p = model.progress, p.phase != .done {
                     ProgressView().controlSize(.small)
                     RichText(phaseText(p), .label)
+                } else if let failure = model.scanFailure {
+                    // A scan that stopped must not leave a stale "listing" status behind.
+                    Label("Scan stopped · Rescan with ⌘R", systemImage: "exclamationmark.triangle")
+                        .foregroundStyle(DS.Tint.warning)
+                        .help(failure)
                 }
             }
         }

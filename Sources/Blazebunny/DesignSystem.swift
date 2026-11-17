@@ -166,22 +166,17 @@ extension DS {
     }
 }
 
-/// Near-black window with one slow, soft light in the upper left. Static when
-/// Reduce Motion is on; the light only drifts a few points either way.
+/// Near-black window with one soft light in the upper left. It is deliberately still: an animated
+/// backdrop was redrawn 20 times a second and kept the idle app at 9 to 16% CPU (speed beats flourish).
 struct WindowBackdrop: View {
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
-
     var body: some View {
         ZStack {
             DS.Palette.window
-            TimelineView(.animation(minimumInterval: 1.0 / 20, paused: reduceMotion)) { ctx in
-                let t = reduceMotion ? 0 : ctx.date.timeIntervalSinceReferenceDate
-                RadialGradient(
-                    colors: [DS.Palette.glow.opacity(0.22), .clear],
-                    center: UnitPoint(x: 0.12 + 0.03 * sin(t / 9), y: 0.05 + 0.03 * cos(t / 11)),
-                    startRadius: 0, endRadius: 720
-                )
-            }
+            RadialGradient(
+                colors: [DS.Palette.glow.opacity(0.22), .clear],
+                center: UnitPoint(x: 0.12, y: 0.05),
+                startRadius: 0, endRadius: 720
+            )
         }
         .ignoresSafeArea()
     }
@@ -225,25 +220,19 @@ struct SidebarLabelStyle: LabelStyle {
     }
 }
 
-/// A slow, soft coloured light behind the sidebar so the glass has something to refract: violet at the
-/// top, a cool blue low down. Drifts a few points; still when Reduce Motion is on, absent (solid
-/// window colour only) when Reduce Transparency is on.
+/// A soft coloured light behind the sidebar so the glass has something to refract: violet at the top,
+/// a cool blue low down. Still (no timeline), and absent (solid window colour only) when Reduce
+/// Transparency is on.
 struct SidebarGlow: View {
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
 
     var body: some View {
         if !reduceTransparency {
-            TimelineView(.animation(minimumInterval: 1.0 / 20, paused: reduceMotion)) { ctx in
-                let t = reduceMotion ? 0 : ctx.date.timeIntervalSinceReferenceDate
-                ZStack {
-                    RadialGradient(colors: [DS.Tint.library.opacity(0.13), .clear],
-                                   center: UnitPoint(x: 0.15 + 0.06 * sin(t / 8), y: 0.02 + 0.03 * cos(t / 10)),
-                                   startRadius: 0, endRadius: 460)
-                    RadialGradient(colors: [Color(red: 0.30, green: 0.52, blue: 1.0).opacity(0.10), .clear],
-                                   center: UnitPoint(x: 0.85 + 0.05 * cos(t / 9), y: 0.98 + 0.03 * sin(t / 12)),
-                                   startRadius: 0, endRadius: 480)
-                }
+            ZStack {
+                RadialGradient(colors: [DS.Tint.library.opacity(0.13), .clear],
+                               center: UnitPoint(x: 0.15, y: 0.02), startRadius: 0, endRadius: 460)
+                RadialGradient(colors: [Color(red: 0.30, green: 0.52, blue: 1.0).opacity(0.10), .clear],
+                               center: UnitPoint(x: 0.85, y: 0.98), startRadius: 0, endRadius: 480)
             }
             .allowsHitTesting(false)
         }

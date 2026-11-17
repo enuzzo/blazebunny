@@ -135,10 +135,24 @@ session sidebar, without becoming a rainbow. Direction:
 - Selection: accent at 30% (`Tint.selection`) with a 3 x 14 pt accent marker at the leading edge; the
   system's grey selection is switched off (`SidebarTableTweaks`, `selectionHighlightStyle = .none`).
   Hover: white 7%. Both fade in 0.12 s, no animation with Reduce Motion.
-- Glow: `SidebarGlow`, violet at the top left and cool blue at the bottom right, drifting a few points,
-  under the 50% ultra-thin material. Reduce Motion stops the drift; Reduce Transparency removes glow and
+- Glow: `SidebarGlow`, violet (13%) at the top left and cool blue (10%) at the bottom right, wide radii
+  (460 to 480 pt), drifting a few points, under the 50% ultra-thin material. It is one backdrop behind the
+  whole sidebar including titlebar and footer (applied outside the list, `ignoresSafeArea`), so it never
+  stops at an edge. Rule (owner, 2026-11-17): colour and gradient are minimal, always blended into the
+  interface and never cut; they must help reading, otherwise purity wins ("si, serve?"). Approved by the
+  owner at this intensity.
+- Padding: none extra in rows. Content is flush with the section title's left edge; selection, hover and
+  the ghost's dashed frame are drawn around it (outset 4 pt), not by padding it. Applies to every badge. Reduce Motion stops the drift; Reduce Transparency removes glow and
   material (solid window colour).
 - Chevron turns with a short spring (off with Reduce Motion).
+
+## Actions and menus
+
+Every action has one name and one icon, defined once in `Actions.swift` (`AppAction`) and reused by the
+grid context menu, the sidebar menus, the inspector and the menu bar. Context menus are grouped, in the
+order people reach for things, with a separator between groups: copy, then open and locate, then (later)
+organize (tray, compare, collection), then destructive items last in red. Titles are verbs with their
+object ("Copy Path", "Show in Finder"); a trailing "…" only when a question follows. Menus show icons.
 
 ## Icons
 

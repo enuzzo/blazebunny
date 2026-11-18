@@ -11,8 +11,10 @@ final class SQLiteDB {
     private(set) var handle: OpaquePointer?
     private var cache: [String: OpaquePointer] = [:]
 
-    init(path: String) throws {
-        let flags = SQLITE_OPEN_READWRITE | SQLITE_OPEN_CREATE | SQLITE_OPEN_NOMUTEX
+    /// `readOnly` opens a second connection for queries only: in WAL mode it reads while another
+    /// connection writes, so the UI never waits for the scanner.
+    init(path: String, readOnly: Bool = false) throws {
+        let flags = (readOnly ? SQLITE_OPEN_READONLY : SQLITE_OPEN_READWRITE | SQLITE_OPEN_CREATE) | SQLITE_OPEN_NOMUTEX
         guard sqlite3_open_v2(path, &handle, flags, nil) == SQLITE_OK else {
             let msg = String(cString: sqlite3_errmsg(handle))
             sqlite3_close(handle)

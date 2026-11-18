@@ -2,6 +2,7 @@ import Foundation
 import ImageIO
 import UniformTypeIdentifiers
 import AVFoundation
+import os
 
 /// Append-only pack files holding encoded thumbnails, so a library is a few
 /// large files instead of tens of thousands of small ones.
@@ -12,7 +13,9 @@ public final class ThumbnailStore: @unchecked Sendable {
     private var currentPack = 0
     private var currentOffset: Int64 = 0
     private var writer: FileHandle?
-    private var readers: [Int: FileHandle] = [:]
+    /// Read-only descriptors per pack. The lock only guards this table; reads use `pread` on the
+    /// descriptor with no lock held, so any number of thumbnails load at once, also during a scan.
+    private let readers = OSAllocatedUnfairLock(initialState: [Int: Int32]())
 
     /// One store per directory, shared by every `Library` opened on it. Two stores on the
     /// same packs would both append at the same offset and overwrite each other (seen when
@@ -37,7 +40,7 @@ public final class ThumbnailStore: @unchecked Sendable {
 
     deinit {
         try? writer?.close()
-        for r in readers.values { try? r.close() }
+        readers.withLock { for fd in $0.values { close(fd) } }
     }
 
     func packURL(_ n: Int) -> URL {
@@ -72,20 +75,31 @@ public final class ThumbnailStore: @unchecked Sendable {
     }
 
     public func data(at loc: ThumbnailLocation) throws -> Data {
-        lock.lock()
-        defer { lock.unlock() }
-        let fh: FileHandle
-        if let r = readers[loc.pack] {
-            fh = r
-        } else {
-            fh = try FileHandle(forReadingFrom: packURL(loc.pack))
-            readers[loc.pack] = fh
+        guard loc.length > 0, loc.offset >= 0 else { throw CocoaError(.fileReadCorruptFile) }
+        let fd = try readDescriptor(pack: loc.pack)
+        var data = Data(count: loc.length)
+        let read = data.withUnsafeMutableBytes { buffer -> Int in
+            var done = 0
+            while done < loc.length {
+                let n = pread(fd, buffer.baseAddress! + done, loc.length - done, off_t(loc.offset) + off_t(done))
+                if n < 0 && errno == EINTR { continue }
+                if n <= 0 { break }
+                done += n
+            }
+            return done
         }
-        try fh.seek(toOffset: UInt64(loc.offset))
-        guard let d = try fh.read(upToCount: loc.length), d.count == loc.length else {
-            throw CocoaError(.fileReadCorruptFile)
+        guard read == loc.length else { throw CocoaError(.fileReadCorruptFile) }
+        return data
+    }
+
+    private func readDescriptor(pack: Int) throws -> Int32 {
+        try readers.withLock { table in
+            if let fd = table[pack] { return fd }
+            let fd = open(packURL(pack).path, O_RDONLY | O_CLOEXEC)
+            guard fd >= 0 else { throw CocoaError(.fileReadNoSuchFile) }
+            table[pack] = fd
+            return fd
         }
-        return d
     }
 }
 

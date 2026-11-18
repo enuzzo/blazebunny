@@ -1,4 +1,5 @@
 import SwiftUI
+import AppKit
 
 /// Blazebunny's design system. Every size, spacing and control style in the
 /// app comes from here, so the UI stays on one grid and one vocabulary.
@@ -26,6 +27,10 @@ enum DS {
         static let iconGap: CGFloat = 6
         /// Horizontal padding inside a pill.
         static let pillInset: CGFloat = 10
+        /// Padding of popovers and sheets' inner blocks is `m`; a sheet's own margin is this.
+        static let sheet: CGFloat = 20
+        /// Around a value that turns into a link on hover (2 pt above and below, `iconGap` at the sides).
+        static let hairGap: CGFloat = 2
     }
 
     enum Size {
@@ -58,13 +63,57 @@ enum DS {
         static let dataBar: CGFloat = 72
         static let dataBarHeight: CGFloat = 4
         static let inspectorLabel: CGFloat = 92
+        /// Thumbnails: the slider's range, its starting value and the step of ⌘+ and ⌘−.
+        static let thumbnailMin: CGFloat = 80
+        static let thumbnailDefault: CGFloat = 160
+        static let thumbnailMax: CGFloat = 360
+        static let thumbnailStep: CGFloat = 40
+        static let toolbarSlider: CGFloat = 100
+        /// Height of a month header in the grid.
+        static let monthHeader: CGFloat = 40
+        /// The source badge in a thumbnail's corner, and the glyph inside it.
+        static let cellBadge: CGFloat = 18
+        static let cellBadgeGlyph: CGFloat = 10
+        /// The selection ring around a thumbnail, and how far the image steps back inside it.
+        static let selectionRing: CGFloat = 2
+        static let selectionInset: CGFloat = 4
+        /// Tallest the inspector's preview image gets, so the details below stay in view.
+        static let previewMaxHeight: CGFloat = 300
+        /// Icon scale: tiny marks (colour dot, pill chevron), glyphs in popover rows, the ghost in a
+        /// badge, in a row, and next to the title.
+        static let dot: CGFloat = 8
+        static let glyphColumn: CGFloat = 18
+        static let iconSmall: CGFloat = 12
+        static let iconBadge: CGFloat = 14
+        static let iconRow: CGFloat = 16
+        static let iconTitle: CGFloat = 18
+        /// The clear button at the end of an active pill.
+        static let pillClear: CGFloat = 20
+        /// Thin vertical rule between groups of pills.
+        static let pillRule: CGFloat = 20
+        /// Colour swatches in the save-search sheet.
+        static let swatch: CGFloat = 16
+        /// Popovers and sheets.
+        static let popover: CGFloat = 280
+        static let popoverWide: CGFloat = 360
+        static let popoverMaxHeight: CGFloat = 420
+        static let sheet: CGFloat = 380
+        static let preferences: CGFloat = 440
+        /// Height of the month histogram in the date popover.
+        static let histogram: CGFloat = 72
+        /// Shortest placeholder block ("No values in this view").
+        static let placeholder: CGFloat = 64
     }
 
     enum Radius {
         static let small: CGFloat = 4
         static let medium: CGFloat = 6
         static let cell: CGFloat = 8
+        /// The ghost outline around the content area.
+        static let large: CGFloat = 12
         static let panel: CGFloat = 16
+        /// Tiny shapes: histogram bars, orientation glyphs.
+        static let hair: CGFloat = 2
     }
 
     /// Tints by meaning, never by decoration.
@@ -131,6 +180,12 @@ extension DS {
 }
 
 extension View {
+    /// Sizes an SF Symbol from the icon scale in `DS.Size` (symbols take their size from a font; this
+    /// is the one place that says so, so views never write a font).
+    func dsIcon(_ size: CGFloat, weight: Font.Weight = .regular) -> some View {
+        font(.system(size: size, weight: weight))
+    }
+
     /// Sets text from the type scale. Words are sans; numbers and data are mono.
     func dsText(_ style: DS.TextStyle, _ role: TextRole = .text) -> some View {
         dsFont(style.size - (role == .number ? style.monoAdjust : 0), weight: style.weight, role)
@@ -158,11 +213,31 @@ extension DS {
         static let hover = Color.white.opacity(0.07)
         static let glassFill = Color.white.opacity(0.045)
         static let glassFillSolid = Color(red: 0.094, green: 0.098, blue: 0.110)
+        /// A value row under the pointer in the inspector.
+        static let rowHover = Color.white.opacity(0.04)
+        /// Histogram bars that are not selected.
+        static let histogramBar = Color.primary.opacity(0.22)
+        /// A pill while it is pressed (and the almost-clear fill that keeps the whole pill clickable).
+        static let pressed = Color.primary.opacity(0.10)
+        static let hitArea = Color.primary.opacity(0.0001)
+        /// Opacity of the window colour behind a pinned month header.
+        static let headerVeil: CGFloat = 0.88
+        /// A thumbnail cell before its image arrives, and the dark chip behind the source badge (AppKit colours for the grid).
+        static let cellPlaceholder = NSColor.labelColor.withAlphaComponent(0.04)
+        static let badgeScrim = NSColor.black.withAlphaComponent(0.5)
     }
 
     enum Motion {
         /// View changes: short, never during fast scroll.
         static let view = Animation.easeOut(duration: 0.3)
+        /// Hover and selection in the sidebar.
+        static let quick = Animation.easeOut(duration: 0.12)
+        /// The grid's reflow: how long thumbnails glide to their new place (ease-out), how long the
+        /// width must rest before the reflow starts (a side panel has finished sliding), and the
+        /// shortest time between two reflows while the size slider is dragged.
+        static let reflowDuration: TimeInterval = 0.24
+        static let reflowSettle: TimeInterval = 0.06
+        static let reflowStep: TimeInterval = 0.10
     }
 }
 
@@ -267,8 +342,8 @@ struct SidebarRowChrome: ViewModifier {
             }
             .contentShape(shape)
             .onHover { hovering = $0 }
-            .animation(reduceMotion ? nil : .easeOut(duration: 0.12), value: hovering)
-            .animation(reduceMotion ? nil : .easeOut(duration: 0.12), value: selected)
+            .animation(reduceMotion ? nil : DS.Motion.quick, value: hovering)
+            .animation(reduceMotion ? nil : DS.Motion.quick, value: selected)
             .listRowBackground(Color.clear)
             .listRowSeparator(.hidden)
             .listRowInsets(EdgeInsets(top: 0, leading: 0, bottom: 0, trailing: 0))
@@ -309,15 +384,34 @@ struct PillStyle: ButtonStyle {
 
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
-            .dsText(.label)
             .foregroundStyle(isOn ? tint : .primary)
             .padding(.horizontal, DS.Space.pillInset)
+            .pillChrome(isOn: isOn, tint: tint, isPressed: configuration.isPressed)
+            .opacity(configuration.isPressed ? 0.75 : 1)
+    }
+}
+
+/// The pill itself: label type, 28 pt height, neutral outline when off, tinted fill when on. Shared
+/// by `PillStyle` (one button) and the filter pills (a button and a clear button in one capsule).
+struct PillChrome: ViewModifier {
+    var isOn: Bool
+    var tint: Color
+    var isPressed = false
+
+    func body(content: Content) -> some View {
+        content
+            .dsText(.label)
             .frame(height: DS.Size.control)
             .background {
-                Capsule().fill(isOn ? tint.opacity(DS.Tint.fill) : Color.primary.opacity(configuration.isPressed ? 0.10 : 0.0001))
+                Capsule().fill(isOn ? tint.opacity(DS.Tint.fill) : (isPressed ? DS.Palette.pressed : DS.Palette.hitArea))
                 if !isOn { Capsule().strokeBorder(DS.Palette.controlStroke) }
             }
             .contentShape(Capsule())
-            .opacity(configuration.isPressed ? 0.75 : 1)
+    }
+}
+
+extension View {
+    func pillChrome(isOn: Bool, tint: Color = .accentColor, isPressed: Bool = false) -> some View {
+        modifier(PillChrome(isOn: isOn, tint: tint, isPressed: isPressed))
     }
 }

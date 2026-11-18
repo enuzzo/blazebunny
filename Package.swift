@@ -16,5 +16,7 @@ let package = Package(
         .executableTarget(name: "bbbench", dependencies: ["BlazebunnyCore"]),
         .executableTarget(name: "bbscopebench", dependencies: ["BlazebunnyCore"]),
         .testTarget(name: "BlazebunnyCoreTests", dependencies: ["BlazebunnyCore"]),
+        // The app's own logic that is not UI: grid snapshots, the thumbnail loader, the model's ghost lifecycle.
+        .testTarget(name: "BlazebunnyTests", dependencies: ["Blazebunny", "BlazebunnyCore"]),
     ]
 )

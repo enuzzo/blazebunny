@@ -18,7 +18,7 @@ struct PreferencesView: View {
         }
         .formStyle(.grouped)
         .dsText(.body)
-        .frame(width: 440)
+        .frame(width: DS.Size.preferences)
         .fixedSize(horizontal: false, vertical: true)
         .preferredColorScheme(.dark)
         .environment(\.brandTypeface, useBrandTypeface && Typeface.isAvailable)

@@ -33,7 +33,8 @@ struct SidebarView: View {
                             actionButton(.forgetLibrary, role: .destructive) { pendingForget = lib }
                         }
                 }
-                // Drag a library up or down to put the libraries in the order you want.
+                // Drag a library up or down to put the libraries in the order you want. The rows carry no
+                // tap gesture (see `RowClicks`), so a press that moves is the list's drag and nothing else.
                 .onMove { model.moveLibraries(from: $0, to: $1) }
             } header: {
                 SidebarHeader("Libraries")
@@ -52,7 +53,7 @@ struct SidebarView: View {
                             }
                     }
                 } header: {
-                    SidebarHeader(GhostText.section, tint: DS.Tint.ghost) { GhostIcon(size: 12, decorative: true) }
+                    SidebarHeader(GhostText.section, tint: DS.Tint.ghost) { GhostIcon(size: DS.Size.iconSmall, decorative: true) }
                 }
             }
             if model.library != nil {
@@ -100,12 +101,12 @@ struct SidebarView: View {
                 Button { model.openFolderPanel() } label: { Label("Open Folder…", systemImage: "plus") }
                     .buttonStyle(.borderless)
                 Spacer()
-                Button { model.openFolderPanel(ghost: true) } label: { GhostIcon(size: 18) }
+                Button { model.openFolderPanel(ghost: true) } label: { GhostIcon(size: DS.Size.iconTitle) }
                     .buttonStyle(.borderless)
                     .accessibilityLabel("Open Ghost Folder")
                     .help("Open a Ghost Folder… (⇧⌘O). " + GhostText.explanation)
             }
-            .padding(12)
+            .padding(DS.Space.m)
             .frame(maxWidth: .infinity, alignment: .leading)
         }
         // One continuous backdrop behind everything, titlebar and footer included, so the light never
@@ -137,7 +138,6 @@ struct SidebarView: View {
     /// The library's name, editable in place. Renaming only changes the name
     /// shown here; the folder on disk is never touched.
     @ViewBuilder func libraryRow(_ lib: SavedLibrary) -> some View {
-        let count = lib.path == model.currentPath && model.counts.total > 0 ? model.counts.total : nil
         if renamingPath == lib.path {
             SidebarRowContent {
                 Image(systemName: "photo.stack").foregroundStyle(DS.Tint.library)
@@ -150,8 +150,8 @@ struct SidebarView: View {
                     .onChange(of: renameFocused) { _, focused in if !focused { commitRename(lib) } }
             }
         } else {
-            SidebarRowContent(count: count) {
-                if lib.isGhost { GhostIcon(size: 16) } else { Image(systemName: "photo.stack").foregroundStyle(DS.Tint.library) }
+            SidebarRowContent(accessory: AnyView(LibraryCount(model: model, path: lib.path))) {
+                if lib.isGhost { GhostIcon(size: DS.Size.iconRow) } else { Image(systemName: "photo.stack").foregroundStyle(DS.Tint.library) }
             } title: {
                 Text(lib.name)
             }
@@ -162,8 +162,11 @@ struct SidebarView: View {
                         .padding(.horizontal, -DS.Space.xs)
                 }
             }
-            .onTapGesture(count: 2) { pendingRename?.cancel(); beginRename(lib) }
-            .simultaneousGesture(TapGesture().onEnded { slowClick(lib) })
+            // Double click and slow click rename; both are only watched, never intercepted.
+            .background {
+                RowClicks(onPress: { slowClick(lib, at: $0) },
+                          onDoubleClick: { pendingRename?.cancel(); beginRename(lib) })
+            }
         }
     }
 
@@ -196,8 +199,9 @@ struct SidebarView: View {
     }
 
     /// Like Finder: a click on a row that was already selected starts renaming
-    /// after the double-click interval, unless another click follows.
-    func slowClick(_ lib: SavedLibrary) {
+    /// after the double-click interval, unless another click follows. `point` is where the button
+    /// went down, on screen: a press that is still held or has moved by then was a drag, not a click.
+    func slowClick(_ lib: SavedLibrary, at point: NSPoint) {
         pendingRename?.cancel()
         let wait = NSEvent.doubleClickInterval
         // Only when the library is shown plain: after filtering, a click means "show everything".
@@ -207,7 +211,11 @@ struct SidebarView: View {
               Date().timeIntervalSince(selectedSince) > wait + 0.1 else { return }
         pendingRename = Task { @MainActor in
             try? await Task.sleep(for: .seconds(wait + 0.15))
-            if !Task.isCancelled, renamingPath == nil { beginRename(lib) }
+            let now = NSEvent.mouseLocation
+            let moved = abs(now.x - point.x) > 4 || abs(now.y - point.y) > 4
+            guard !Task.isCancelled, renamingPath == nil, !moved, NSEvent.pressedMouseButtons & 1 == 0,
+                  model.sidebarSelection == .library(lib.path) else { return }
+            beginRename(lib)
         }
     }
 
@@ -227,7 +235,7 @@ struct SidebarView: View {
     @ViewBuilder func savedRows(in folder: String?) -> some View {
         ForEach(model.savedSearches.filter { $0.folder == folder }) { s in
             SidebarRowContent {
-                Circle().fill(Color(nsColor: (TagColor(rawValue: s.color) ?? .gray).color)).frame(width: 8, height: 8)
+                Circle().fill(Color(nsColor: (TagColor(rawValue: s.color) ?? .gray).color)).frame(width: DS.Size.dot, height: DS.Size.dot)
             } title: {
                 Text(s.name)
             }

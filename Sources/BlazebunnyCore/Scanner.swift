@@ -28,17 +28,24 @@ public final class FolderScanner: @unchecked Sendable {
     /// Number of files whose metadata was read (for tests and benchmarks).
     public var metadataReads: Int { lock.withLock { _metadataReads } }
 
+    /// Called after each batch of thumbnails is saved, with where each one is. The grid shows them
+    /// from this, so it does not have to reload the whole list just because thumbnails were made.
+    /// Set it before `run`; it is called on the scanner's task.
+    public var onThumbnails: (@Sendable ([(id: Int64, location: ThumbnailLocation)]) -> Void)?
+
     /// Whether the folder is still there as a directory. Checked before pruning and
     /// before saving each batch, so a disk that vanishes mid-scan cannot wipe the index
     /// or mark unread files as failed. Replaceable in tests.
     public var isRootReachable: @Sendable () -> Bool
 
-    public init(root: URL, index: LibraryIndex, thumbnails: ThumbnailStore?, ioConcurrency: Int = 2) {
+    /// `ioConcurrency` nil picks the number of files read at once from the kind of disk the folder
+    /// is on (`VolumeKind`): more on a solid-state disk, two on anything that may be a spinning one.
+    public init(root: URL, index: LibraryIndex, thumbnails: ThumbnailStore?, ioConcurrency: Int? = nil) {
         let root = root.standardizedFileURL
         self.root = root
         self.index = index
         self.thumbnails = thumbnails
-        self.ioConcurrency = max(1, ioConcurrency)
+        self.ioConcurrency = max(1, ioConcurrency ?? VolumeKind(of: root).recommendedIOConcurrency)
         self.isRootReachable = {
             var isDir: ObjCBool = false
             return FileManager.default.fileExists(atPath: root.path, isDirectory: &isDir) && isDir.boolValue
@@ -160,7 +167,7 @@ public final class FolderScanner: @unchecked Sendable {
         var pending = try index.pendingThumbnails(ids: wanted)
         if pending.isEmpty { pending = try index.pendingThumbnails(limit: ioConcurrency * 4) }
         if pending.isEmpty { return 0 }
-        let results = await mapConcurrently(pending) { item -> (Int64, ThumbnailLocation?) in
+        let results = await mapConcurrently(pending) { item -> (id: Int64, location: ThumbnailLocation?) in
             let url = self.root.appendingPathComponent(item.relPath)
             do {
                 let data = try await ThumbnailMaker.make(from: url, kind: item.kind)
@@ -171,7 +178,9 @@ public final class FolderScanner: @unchecked Sendable {
             }
         }
         guard isRootReachable() else { return nil }
-        for (id, loc) in results { try index.saveThumbnail(id: id, loc) }
+        try index.saveThumbnails(results)
+        let made = results.compactMap { r in r.location.map { (id: r.id, location: $0) } }
+        if !made.isEmpty { onThumbnails?(made) }
         return results.count
     }
 

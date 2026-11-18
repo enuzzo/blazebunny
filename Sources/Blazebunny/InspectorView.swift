@@ -12,16 +12,19 @@ struct InspectorView: View {
         if let d = model.detail {
             ScrollView {
                 VStack(alignment: .leading, spacing: DS.Space.xl) {
-                    PreviewImage(model: model, detail: d)
+                    PreviewImage(preview: model.preview)
                     if model.selection.count > 1 {
                         Text("\(model.selection.count) selected — copy puts one prompt per line")
                             .dsText(.meta).foregroundStyle(.secondary)
                     }
                     if let m = d.metadata {
-                        header(m)
-                        if let text = m.promptText { promptSection(m, text) }
+                        // Parsed once per draw: `prompt` splits the text and its parameters every time it is asked.
+                        let prompt = m.prompt
+                        let text = prompt?.text ?? m.promptRaw.flatMap { $0.isEmpty ? nil : $0 }
+                        header(m, hasPrompt: text != nil)
+                        if let text { promptSection(m, text, hasParameters: prompt != nil) }
                         else if m.source == .camera, let e = m.camera?.exposureSummary { exposureAction(e) }
-                        if let p = m.prompt, !p.parameters.isEmpty { midjourneySection(p) }
+                        if let p = prompt, !p.parameters.isEmpty { midjourneySection(p) }
                         if let g = m.generator { generationSection(g) }
                         if let c = m.camera, m.source == .camera { cameraSection(c) }
                     } else if d.metadataFailed {
@@ -36,14 +39,17 @@ struct InspectorView: View {
                 .frame(maxWidth: .infinity, alignment: .leading)
             }
         } else if model.library != nil {
+            // The summary is read from the index only while it is on screen.
             LibrarySummaryView(model: model)
+                .onAppear { model.summaryVisible = true }
+                .onDisappear { model.summaryVisible = false }
         } else {
             ContentUnavailableView("No Selection", systemImage: "photo.on.rectangle",
                                    description: Text("Select an image to see its details."))
         }
     }
 
-    func header(_ m: ItemMetadata) -> some View {
+    func header(_ m: ItemMetadata, hasPrompt: Bool) -> some View {
         HStack(spacing: DS.Space.s) {
             Label(m.source.title, systemImage: m.source.symbol)
                 .dsText(.metaStrong)
@@ -54,7 +60,7 @@ struct InspectorView: View {
                 .onTapGesture { model.addFilter(.source, m.source.rawValue) }
                 .help("Show only \(m.source.title) images")
             Spacer()
-            if m.promptText != nil || m.camera != nil {
+            if hasPrompt || m.camera != nil {
                 Text("Click a value to filter").dsText(.meta).foregroundStyle(.secondary)
             }
         }
@@ -69,25 +75,25 @@ struct InspectorView: View {
         }
     }
 
-    func promptSection(_ m: ItemMetadata, _ text: String) -> some View {
-        VStack(alignment: .leading, spacing: 12) {
+    func promptSection(_ m: ItemMetadata, _ text: String, hasParameters: Bool) -> some View {
+        VStack(alignment: .leading, spacing: DS.Space.m) {
             Text(text)
                 .dsText(.reading)
                 .lineSpacing(3)
                 .textSelection(.enabled)
                 .fixedSize(horizontal: false, vertical: true)
-            HStack(spacing: 8) {
+            HStack(spacing: DS.Space.s) {
                 Button { model.copy(.prompt) } label: {
                     Text(model.copiedKind == .prompt ? "Copied" : "Copy Prompt")
                 }
                 .buttonStyle(.borderedProminent)
-                if m.prompt != nil {
+                if hasParameters {
                     Button(model.copiedKind == .text ? "Copied" : "Copy Text") { model.copy(.text) }
                     Button(model.copiedKind == .parameters ? "Copied" : "Copy Parameters") { model.copy(.parameters) }
                 }
             }
             if let neg = m.generator?.negativePrompt, !neg.isEmpty {
-                VStack(alignment: .leading, spacing: 4) {
+                VStack(alignment: .leading, spacing: DS.Space.xs) {
                     SectionTitle("Negative prompt")
                     Text(neg).dsText(.label).foregroundStyle(.secondary).textSelection(.enabled)
                 }
@@ -193,7 +199,7 @@ struct InspectorView: View {
     }
 
     var actions: some View {
-        VStack(alignment: .leading, spacing: 8) {
+        VStack(alignment: .leading, spacing: DS.Space.s) {
             HStack {
                 Button("Show in Finder") { model.revealInFinder() }
                 Button("Open") { model.openOriginal() }
@@ -234,7 +240,7 @@ struct InfoTable<Content: View>: View {
     let title: String
     @ViewBuilder var content: Content
     var body: some View {
-        VStack(alignment: .leading, spacing: 4) {
+        VStack(alignment: .leading, spacing: DS.Space.xs) {
             SectionTitle(title)
             VStack(spacing: 0) { content }
         }
@@ -254,7 +260,7 @@ struct InfoRow<Value: View>: View {
         .dsText(.label)
         .frame(minHeight: DS.Size.control)
         // Value rows carry no rule: the column grid and a quiet hover highlight do the work.
-        .background(hover ? Color.white.opacity(0.04) : .clear, in: RoundedRectangle(cornerRadius: DS.Radius.small))
+        .background(hover ? DS.Palette.rowHover : .clear, in: RoundedRectangle(cornerRadius: DS.Radius.small))
         .onHover { hover = $0 }
     }
 }
@@ -278,72 +284,45 @@ struct FilterLink: View {
                 .dsText(.label, mono ? .number : .text)
                 .lineLimit(1)
                 .truncationMode(.middle)
-                .padding(.horizontal, 6)
-                .padding(.vertical, 2)
-                .background(hover ? Color.accentColor.opacity(0.15) : .clear, in: RoundedRectangle(cornerRadius: 4))
+                .padding(.horizontal, DS.Space.iconGap)
+                .padding(.vertical, DS.Space.hairGap)
+                .background(hover ? Color.accentColor.opacity(DS.Tint.fill) : .clear, in: RoundedRectangle(cornerRadius: DS.Radius.small))
                 .foregroundStyle(hover ? Color.accentColor : .primary)
         }
         .buttonStyle(.plain)
-        .padding(.leading, -6)
+        .padding(.leading, -DS.Space.iconGap)
         .onHover { hover = $0 }
         .help("Filter by \(text)")
     }
 }
 
-/// The thumbnail at once, upgraded to a larger image from the original when
-/// the disk is connected. Tall images are capped so the details stay visible.
-/// Sharp previews already decoded, so going back to an image shows it at once.
-@MainActor private let previewCache: NSCache<NSNumber, NSImage> = {
-    let c = NSCache<NSNumber, NSImage>()
-    c.countLimit = 48
-    return c
-}()
-
+/// The selected image, large. `PreviewModel` decides what to show (the thumbnail at once, a sharper
+/// decode when the selection rests); this view only draws it, and reads nothing else, so stepping
+/// through images redraws this view alone. Tall images are capped so the details
+/// stay visible.
 struct PreviewImage: View {
-    let model: LibraryModel
-    let detail: ItemDetail
-    @State private var image: NSImage?
+    let preview: PreviewModel
+    @Environment(\.displayScale) private var displayScale
 
     var body: some View {
         ZStack {
-            RoundedRectangle(cornerRadius: 8).fill(.quaternary)
-            if let image {
-                Image(nsImage: image).resizable().aspectRatio(contentMode: .fit)
+            RoundedRectangle(cornerRadius: DS.Radius.cell).fill(.quaternary)
+            if let image = preview.image {
+                Image(decorative: image, scale: 1)
+                    .resizable()
+                    .aspectRatio(contentMode: .fit)
+                    // The thumbnail and the sharper image are two views, so the swap can cross-fade.
+                    .id(preview.isSharp)
+                    .transition(.opacity)
             }
         }
-        .aspectRatio(aspect, contentMode: .fit)
-        .frame(maxWidth: .infinity, maxHeight: 300)
-        .clipShape(RoundedRectangle(cornerRadius: 8))
-        .task(id: detail.id) { await load() }
-    }
-
-    var aspect: CGFloat {
-        guard let w = detail.metadata?.width, let h = detail.metadata?.height, w > 0, h > 0 else { return 1 }
-        return CGFloat(w) / CGFloat(h)
-    }
-
-    func load() async {
-        let id = detail.id
-        if let sharp = previewCache.object(forKey: NSNumber(value: id)) { image = sharp; return }
-        image = model.thumbnails.cached(id)
-        if image == nil {
-            image = await withCheckedContinuation { cont in model.thumbnails.load(id) { cont.resume(returning: $0) } }
-        }
-        guard model.isOnline, !detail.kind.isVideo, let url = model.originalURL(detail.relPath) else { return }
-        try? await Task.sleep(for: .milliseconds(90))  // skip while arrowing quickly through the grid
-        if Task.isCancelled { return }
-        let big: CGImage? = await Task.detached(priority: .userInitiated) {
-            guard let src = CGImageSourceCreateWithURL(url as CFURL, [kCGImageSourceShouldCache: false] as CFDictionary) else { return nil }
-            return CGImageSourceCreateThumbnailAtIndex(src, 0, [
-                kCGImageSourceCreateThumbnailFromImageAlways: true,
-                kCGImageSourceCreateThumbnailWithTransform: true,
-                kCGImageSourceThumbnailMaxPixelSize: 1200,
-            ] as CFDictionary)
-        }.value
-        if !Task.isCancelled, let big {
-            let sharp = NSImage(cgImage: big, size: NSSize(width: big.width, height: big.height))
-            previewCache.setObject(sharp, forKey: NSNumber(value: id))
-            image = sharp
+        .aspectRatio(preview.aspect, contentMode: .fit)
+        .frame(maxWidth: .infinity, maxHeight: DS.Size.previewMaxHeight)
+        .clipShape(RoundedRectangle(cornerRadius: DS.Radius.cell))
+        // The space an image can take here, so originals are decoded at this size and no larger.
+        .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { width in
+            preview.box = CGSize(width: max(width, 1), height: DS.Size.previewMaxHeight)
+            preview.scale = displayScale
         }
     }
 }

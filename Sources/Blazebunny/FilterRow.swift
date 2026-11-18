@@ -24,7 +24,7 @@ struct FilterRow: View {
                     }
                 }
                 if !model.query.filter.isEmpty || !model.query.text.isEmpty {
-                    Divider().frame(height: 20)
+                    Divider().frame(height: DS.Size.pillRule)
                     Button("Clear All") { model.clearAll() }
                         .buttonStyle(PillStyle())
                         .help("Remove every filter and the search text (⇧⌘⌫)")
@@ -48,7 +48,7 @@ struct FilterGroup<Content: View>: View {
 
     var body: some View {
         HStack(spacing: DS.Space.s) {
-            Divider().frame(height: 20)
+            Divider().frame(height: DS.Size.pillRule)
             // Not a control: only its icon carries the tint, so it never reads as an active filter.
             Label {
                 Text(title).foregroundStyle(.secondary)
@@ -110,7 +110,7 @@ struct FilterPill: View {
                     model.loadFacet(facet)
                 }
             } label: {
-                HStack(spacing: 4) {
+                HStack(spacing: DS.Space.xs) {
                     Text(on ? "\(title):" : title)
                         .foregroundStyle(.secondary)
                     if on {
@@ -119,7 +119,7 @@ struct FilterPill: View {
                             .foregroundStyle(tint == .accentColor ? DS.Tint.activeText : tint)
                             .lineLimit(1)
                     } else {
-                        Image(systemName: "chevron.down").font(.system(size: DS.Size.microIcon, weight: .semibold)).foregroundStyle(.secondary)
+                        Image(systemName: "chevron.down").dsIcon(DS.Size.microIcon, weight: .semibold).foregroundStyle(.secondary)
                     }
                 }
                 .padding(.leading, DS.Space.pillInset)
@@ -134,9 +134,9 @@ struct FilterPill: View {
             }
             if on {
                 Button { model.clear(facet) } label: {
-                    Image(systemName: "xmark").font(.system(size: DS.Size.microIcon, weight: .bold))
-                        .frame(width: 20, height: DS.Size.control)
-                        .padding(.trailing, 4)
+                    Image(systemName: "xmark").dsIcon(DS.Size.microIcon, weight: .bold)
+                        .frame(width: DS.Size.pillClear, height: DS.Size.control)
+                        .padding(.trailing, DS.Space.xs)
                         .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
@@ -145,11 +145,8 @@ struct FilterPill: View {
                 .accessibilityLabel("Clear \(title)")
             }
         }
-        .dsText(.label)
-        .background {
-            Capsule().fill(on ? tint.opacity(DS.Tint.fill) : .clear)
-            Capsule().strokeBorder(on ? .clear : DS.Palette.controlStroke)
-        }
+        // The same capsule as every other control in the row (`PillStyle`).
+        .pillChrome(isOn: on, tint: tint)
     }
 }
 
@@ -199,13 +196,13 @@ struct FacetPopover: View {
                 Text(facet == .param ? "all of" : facet == .date ? "embedded date, else file date" : "any of")
                     .dsText(.meta).foregroundStyle(.secondary)
             }
-            .padding(.horizontal, 12)
-            .padding(.top, 12)
-            .padding(.bottom, 8)
+            .padding(.horizontal, DS.Space.m)
+            .padding(.top, DS.Space.m)
+            .padding(.bottom, DS.Space.s)
             Divider()
             content
         }
-        .frame(width: facet == .date ? 360 : 280)
+        .frame(width: facet == .date ? DS.Size.popoverWide : DS.Size.popover)
         .presentationBackground(DS.Palette.glassFillSolid)
     }
 
@@ -217,25 +214,25 @@ struct FacetPopover: View {
             if values.isEmpty {
                 Text("No values in this view.")
                     .foregroundStyle(.secondary)
-                    .frame(maxWidth: .infinity, minHeight: 64)
+                    .frame(maxWidth: .infinity, minHeight: DS.Size.placeholder)
             } else if facet == .shape {
                 ScrollView {
                     VStack(alignment: .leading, spacing: 0) {
                         section("Orientation", values.filter { $0.value.hasPrefix("o:") }.sorted { orientationRank($0.value) < orientationRank($1.value) })
-                        Divider().padding(.vertical, 4)
+                        Divider().padding(.vertical, DS.Space.xs)
                         section("Exact ratio", values.filter { $0.value.hasPrefix("r:") })
                     }
-                    .padding(6)
+                    .padding(DS.Space.iconGap)
                 }
-                .frame(height: min(420, CGFloat(values.count) * DS.Size.control + 3 * DS.Size.control))
+                .frame(height: min(DS.Size.popoverMaxHeight, CGFloat(values.count) * DS.Size.control + 3 * DS.Size.control))
             } else {
                 ScrollView {
                     VStack(alignment: .leading, spacing: 0) {
                         ForEach(values, id: \.value) { v in row(v) }
                     }
-                    .padding(6)
+                    .padding(DS.Space.iconGap)
                 }
-                .frame(height: min(420, CGFloat(values.count) * DS.Size.control + 12))
+                .frame(height: min(DS.Size.popoverMaxHeight, CGFloat(values.count) * DS.Size.control + 2 * DS.Space.iconGap))
             }
         }
     }
@@ -247,7 +244,7 @@ struct FacetPopover: View {
     func section(_ title: String, _ values: [FacetValue]) -> some View {
         VStack(alignment: .leading, spacing: 0) {
             Text(title).dsText(.metaStrong).foregroundStyle(.secondary)
-                .padding(.horizontal, 8).padding(.vertical, 4)
+                .padding(.horizontal, DS.Space.s).padding(.vertical, DS.Space.xs)
             ForEach(values, id: \.value) { v in row(v) }
         }
     }
@@ -257,7 +254,7 @@ struct FacetPopover: View {
         return Button {
             model.toggle(facet, v.value)
         } label: {
-            HStack(spacing: 10) {
+            HStack(spacing: DS.Space.iconText) {
                 Image(systemName: on ? "checkmark.square.fill" : "square")
                     .foregroundStyle(on ? tint : .secondary)
                     .dsText(.body)
@@ -265,7 +262,7 @@ struct FacetPopover: View {
                 Text(FacetLabel.label(facet, v.value))
                     .dsText(.label, facet == .param || (facet == .shape && v.value.hasPrefix("r:")) ? .number : .text)
                     .lineLimit(1)
-                Spacer(minLength: 8)
+                Spacer(minLength: DS.Space.s)
                 Text(v.count.formatted())
                     .dsText(.meta, .number)
                     .foregroundStyle(.secondary)
@@ -283,7 +280,7 @@ struct FacetPopover: View {
 
     @ViewBuilder func glyph(_ value: String) -> some View {
         if facet == .source, let s = ItemSource(rawValue: value) {
-            Image(systemName: s.symbol).frame(width: 18).foregroundStyle(.secondary)
+            Image(systemName: s.symbol).frame(width: DS.Size.glyphColumn).foregroundStyle(.secondary)
         } else if facet == .shape, value.hasPrefix("o:") {
             let size: CGSize = switch value {
             case "o:portrait": CGSize(width: 9, height: 13)
@@ -291,10 +288,10 @@ struct FacetPopover: View {
             case "o:square": CGSize(width: 11, height: 11)
             default: CGSize(width: 15, height: 7)
             }
-            RoundedRectangle(cornerRadius: 2)
+            RoundedRectangle(cornerRadius: DS.Radius.hair)
                 .strokeBorder(.secondary, lineWidth: 1.5)
                 .frame(width: size.width, height: size.height)
-                .frame(width: 18)
+                .frame(width: DS.Size.glyphColumn)
         }
     }
 }
@@ -309,9 +306,9 @@ struct DatePopoverContent: View {
     var months: [MonthCount] { model.histogram }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
+        VStack(alignment: .leading, spacing: DS.Space.m) {
             if months.isEmpty {
-                Text("No dates in this view.").foregroundStyle(.secondary).frame(maxWidth: .infinity, minHeight: 64)
+                Text("No dates in this view.").foregroundStyle(.secondary).frame(maxWidth: .infinity, minHeight: DS.Size.placeholder)
             } else {
                 bars
                 HStack {
@@ -321,7 +318,7 @@ struct DatePopoverContent: View {
                 }
                 .foregroundStyle(.secondary)
             }
-            HStack(spacing: 6) {
+            HStack(spacing: DS.Space.iconGap) {
                 preset("Last 30 days") { (Calendar.current.date(byAdding: .day, value: -30, to: Date()), nil) }
                 preset("This year") { (Calendar.current.date(from: DateComponents(year: Calendar.current.component(.year, from: Date()))), nil) }
                 preset("Last year") {
@@ -340,7 +337,7 @@ struct DatePopoverContent: View {
             }
             .controlSize(.small)
         }
-        .padding(12)
+        .padding(DS.Space.m)
         .onAppear {
             customFrom = model.query.filter.dateFrom ?? Calendar.current.date(byAdding: .month, value: -1, to: Date())!
             customTo = model.query.filter.dateTo?.addingTimeInterval(-1) ?? Date()
@@ -352,16 +349,16 @@ struct DatePopoverContent: View {
         return HStack(alignment: .bottom, spacing: months.count > 40 ? 1 : 2) {
             ForEach(Array(months.enumerated()), id: \.element.month) { i, m in
                 let selected = isSelected(m.month)
-                RoundedRectangle(cornerRadius: 2)
-                    .fill(selected ? Color.accentColor : Color.primary.opacity(0.22))
-                    .frame(height: max(3, 72 * CGFloat(m.count) / CGFloat(maxCount)))
+                RoundedRectangle(cornerRadius: DS.Radius.hair)
+                    .fill(selected ? Color.accentColor : DS.Palette.histogramBar)
+                    .frame(height: max(3, DS.Size.histogram * CGFloat(m.count) / CGFloat(maxCount)))
                     .frame(maxWidth: .infinity)
                     .contentShape(Rectangle())
                     .help("\(label(m.month)): \(m.count.formatted()) images")
                     .onTapGesture { pick(i, extend: NSEvent.modifierFlags.contains(.shift)) }
             }
         }
-        .frame(height: 72, alignment: .bottom)
+        .frame(height: DS.Size.histogram, alignment: .bottom)
     }
 
     func monthStart(_ s: String) -> Date? {
@@ -404,17 +401,17 @@ struct SaveSearchSheet: View {
     @State private var folder = ""
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 16) {
+        VStack(alignment: .leading, spacing: DS.Space.l) {
             Text(existing == nil ? "Save Search" : "Edit Saved Search").dsText(.headline)
             Form {
                 TextField("Name", text: $name, prompt: Text("e.g. Portraits, v7 raw"))
                 HStack {
                     Text("Color")
                     Spacer()
-                    HStack(spacing: 6) {
+                    HStack(spacing: DS.Space.iconGap) {
                         ForEach(TagColor.allCases, id: \.self) { c in
                             Circle().fill(Color(nsColor: c.color))
-                                .frame(width: 16, height: 16)
+                                .frame(width: DS.Size.swatch, height: DS.Size.swatch)
                                 .overlay(Circle().strokeBorder(.primary, lineWidth: color == c ? 2 : 0).padding(-3))
                                 .onTapGesture { color = c }
                                 .accessibilityLabel(c.rawValue)
@@ -450,8 +447,8 @@ struct SaveSearchSheet: View {
                 .disabled(name.trimmingCharacters(in: .whitespaces).isEmpty)
             }
         }
-        .padding(20)
-        .frame(width: 380)
+        .padding(DS.Space.sheet)
+        .frame(width: DS.Size.sheet)
         .onAppear {
             if let e = existing {
                 name = e.name

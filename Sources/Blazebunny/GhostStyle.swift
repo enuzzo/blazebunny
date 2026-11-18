@@ -39,7 +39,7 @@ struct GhostShape: Shape {
 }
 
 struct GhostIcon: View {
-    var size: CGFloat = 16
+    var size: CGFloat = DS.Size.iconRow
     var tint: Color = DS.Tint.ghost
     /// True where text next to the icon already says "ghost", so VoiceOver reads it once.
     var decorative = false
@@ -57,7 +57,7 @@ struct GhostIcon: View {
 struct GhostBadge: View {
     var body: some View {
         HStack(spacing: DS.Space.iconGap) {
-            GhostIcon(size: 14, decorative: true)
+            GhostIcon(size: DS.Size.iconBadge, decorative: true)
             Text(GhostText.badge)
                 .dsText(.metaStrong)
                 .foregroundStyle(DS.Tint.ghost)
@@ -74,7 +74,7 @@ extension View {
     /// Dashed outline in the ghost tint, drawn inside the view's bounds.
     /// When active the content is also padded inside the outline (more at the top, where the
     /// title sits) so nothing touches the dashes.
-    func ghostOutline(_ active: Bool, radius: CGFloat = 12, inset: CGFloat = 3) -> some View {
+    func ghostOutline(_ active: Bool, radius: CGFloat = DS.Radius.large, inset: CGFloat = 3) -> some View {
         padding(active ? EdgeInsets(top: DS.Space.m + 2, leading: DS.Space.s, bottom: DS.Space.s, trailing: DS.Space.s)
                        : EdgeInsets())
         .overlay {

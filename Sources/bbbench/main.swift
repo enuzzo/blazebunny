@@ -3,7 +3,8 @@ import BlazebunnyCore
 
 // bbbench <folder> [--io N] [--no-thumbs] [--limit N] [--keep]
 // Scans a folder into a throwaway library and prints timings.
-// The source folder is only read.
+// The source folder is only read. Without --io the number of files read at once
+// follows the kind of disk the folder is on, as in the app.
 
 var args = Array(CommandLine.arguments.dropFirst())
 @MainActor func option(_ name: String) -> String? {
@@ -18,7 +19,7 @@ var args = Array(CommandLine.arguments.dropFirst())
     return true
 }
 
-let io = Int(option("--io") ?? "2") ?? 2
+let ioOption = Int(option("--io") ?? "")
 let limit = Int(option("--limit") ?? "") ?? Int.max
 let noThumbs = flag("--no-thumbs")
 let keep = flag("--keep")
@@ -28,6 +29,8 @@ guard let path = args.first else {
 }
 
 let folder = URL(fileURLWithPath: path)
+let volume = VolumeKind(of: folder)
+let io = ioOption ?? volume.recommendedIOConcurrency
 let base = FileManager.default.temporaryDirectory.appendingPathComponent("bbbench-" + UUID().uuidString)
 let library = try Library(root: folder, base: base)
 let scanner = FolderScanner(root: folder, index: library.index, thumbnails: noThumbs ? nil : library.thumbnails, ioConcurrency: io)
@@ -40,7 +43,7 @@ final class Timings: @unchecked Sendable {
 }
 let t = Timings()
 
-print("bbbench: \(folder.path)  io=\(io) thumbs=\(!noThumbs) limit=\(limit == .max ? "none" : String(limit))")
+print("bbbench: \(folder.path)  disk=\(volume.rawValue) io=\(io) thumbs=\(!noThumbs) limit=\(limit == .max ? "none" : String(limit))")
 try await scanner.run { p in
     if t.phaseStart[p.phase] == nil {
         t.phaseStart[p.phase] = p.elapsed

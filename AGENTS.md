@@ -14,7 +14,12 @@ Current plan: `docs/superpowers/plans/2026-11-16-blazebunny-m1.md`.
   packs. Must stay fully unit-tested.
 - `Sources/Blazebunny` — SwiftUI app with an AppKit `NSCollectionView` grid.
 - `Sources/bbbench` — CLI that runs the scanner on a folder and prints timings.
+- `Sources/bbscopebench` — CLI that builds a generated 100k index (rows shaped like a real library's)
+  and times every query the app makes against the speed budgets; `--extra` adds what the UI feels
+  while a scan writes.
 - `Tests/BlazebunnyCoreTests` — Swift Testing; fixtures are generated in code.
+- `Tests/BlazebunnyTests` — the app's own logic that is not UI (grid snapshots, thumbnail loader,
+  the model's ghost lifecycle).
 - `scripts/build-app.sh` — assembles and ad-hoc signs `build/Blazebunny.app`.
 
 ## Rules
@@ -32,6 +37,13 @@ Current plan: `docs/superpowers/plans/2026-11-16-blazebunny-m1.md`.
 - Code, comments, docs and commit messages in English.
 - Run `swift test` before committing; run `gitleaks dir .` before the first
   commit and `gitleaks git .` before pushing.
+- **Speed is a feature** (the budgets are in
+  `docs/superpowers/specs/2026-11-17-libraries-and-folders-design.md`). Nothing that grows with the
+  library runs on the main thread: the grid's data is a `GridSnapshot` made off the main thread, views
+  read the index through its read-only connections, thumbnails are read with `pread` from the location
+  each `BrowseItem` carries. A SwiftUI view reads only what it shows (a new piece of state that changes
+  often gets its own small view). Measure before and after with the commands below and record the
+  numbers in `docs/MILESTONES.md`; an optimisation that does not show in them is reverted.
 - Swift 6 language mode; macOS 15 minimum.
 - **UI goes through the design system** in `Sources/Blazebunny/DesignSystem.swift`:
   spacing from `DS.Space`, sizes from `DS.Size`, radii from `DS.Radius`, tints
@@ -67,5 +79,14 @@ Current plan: `docs/superpowers/plans/2026-11-16-blazebunny-m1.md`.
 swift build
 swift test
 swift run -c release bbbench <folder> [--io N] [--no-thumbs] [--limit N]
+swift run -c release bbscopebench [--count N] [--extra] [--reuse <dir>]
 scripts/build-app.sh && open build/Blazebunny.app
+# Timings of the running app (generated demo folders only, never a real library):
+BB_PERF_LOG=/tmp/bb.log build/Blazebunny.app/Contents/MacOS/Blazebunny --open <folder> --ghost [--bench]
 ```
+
+`BB_PERF_LOG` writes launch and reload timings; `--bench` then drives the app through the side
+panels, the size slider, folder, filter, search, scrolling and arrowing, logs the main thread's CPU
+time and stalls for each, and quits. `BB_SNAPSHOT_DIR=<dir>` saves pictures of the window at the key
+moments (`Perf.swift`, `PerfBench.swift`). Signpost intervals (`grid.apply`, `grid.reflow`) show in
+Instruments under Points of Interest.

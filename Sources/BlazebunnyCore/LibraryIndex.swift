@@ -19,9 +19,27 @@ public struct BrowseItem: Hashable, Sendable, Identifiable {
     public var sortDate: Double
     public var width: Int?
     public var height: Int?
-    public var hasThumbnail: Bool
+    /// Where the thumbnail sits in the packs; nil while it has not been made. Carried here so a
+    /// grid cell reads its thumbnail without asking the index.
+    public var thumbnail: ThumbnailLocation?
     public var source: ItemSource?
     public var aspect: String?
+
+    public init(id: Int64, relPath: String, sortDate: Double, width: Int? = nil, height: Int? = nil,
+                thumbnail: ThumbnailLocation? = nil, source: ItemSource? = nil, aspect: String? = nil) {
+        self.id = id
+        self.relPath = relPath
+        self.sortDate = sortDate
+        self.width = width
+        self.height = height
+        self.thumbnail = thumbnail
+        self.source = source
+        self.aspect = aspect
+    }
+
+    public var hasThumbnail: Bool { thumbnail != nil }
+    /// The file's name without its folders.
+    public var fileName: Substring { relPath.lastIndex(of: "/").map { relPath[relPath.index(after: $0)...] } ?? relPath[...] }
 }
 
 public struct ItemDetail: Sendable, Equatable {
@@ -42,7 +60,7 @@ public struct PendingItem: Sendable, Equatable {
     public var mtime: Double
 }
 
-public struct ThumbnailLocation: Sendable, Equatable {
+public struct ThumbnailLocation: Sendable, Hashable {
     public var pack: Int
     public var offset: Int64
     public var length: Int
@@ -83,31 +101,63 @@ public enum ItemSort: String, Codable, Sendable, CaseIterable {
     public var isByDate: Bool { self != .name }
 }
 
-/// The SQLite index of one library. All calls are serialised on an internal
-/// lock, so it can be shared between the scanner and the UI.
+/// The SQLite index of one library, shared between the scanner and the UI.
+///
+/// Three connections to the same WAL database, each serialised on its own lock: the **writer**
+/// (the scanner, and the few edits the UI makes), a read-only one for **lists** (everything a view
+/// shows: items, counts, facets, summary) and a read-only one for **lookups** (one image's detail).
+/// A reader never waits for the writer, so arrowing through images and reloading the grid stay
+/// quick while a scan writes; a lookup never waits for a long list query either.
 public final class LibraryIndex: @unchecked Sendable {
-    static let schemaVersion = 3
-    private let db: SQLiteDB
-    private let lock = NSLock()
-    /// Folder path to `dirs.id`. Only touched under `lock` (or during migration).
+    static let schemaVersion = 4
+
+    final class Connection: @unchecked Sendable {
+        let db: SQLiteDB
+        private let lock = NSLock()
+        init(_ db: SQLiteDB) { self.db = db }
+        func sync<T>(_ body: (SQLiteDB) throws -> T) rethrows -> T {
+            lock.lock()
+            defer { lock.unlock() }
+            return try body(db)
+        }
+    }
+
+    let writer: Connection
+    private(set) var lists: Connection
+    private(set) var lookups: Connection
+    private var db: SQLiteDB { writer.db }
+    /// Folder path to `dirs.id`. Only touched under the writer's lock (or during migration).
     private var dirCache: [String: Int64] = [:]
+    /// The last month histogram, valid while the database has not changed.
+    var histogramCache: (key: String, version: Int64, months: [MonthCount])?
 
     public init(url: URL) throws {
         // An index file that predates the creation-date key tells us when the
         // library was first opened; a new file is created now.
         let existingDate = FileManager.default.fileExists(atPath: url.path)
             ? (try? url.resourceValues(forKeys: [.creationDateKey]).creationDate) : nil
-        db = try SQLiteDB(path: url.path)
-        try db.exec("PRAGMA journal_mode=WAL; PRAGMA synchronous=NORMAL; PRAGMA foreign_keys=ON;")
+        let main = try SQLiteDB(path: url.path)
+        writer = Connection(main)
+        try main.exec("PRAGMA journal_mode=WAL; PRAGMA synchronous=NORMAL; PRAGMA foreign_keys=ON;")
+        // Placeholders so every stored property is set before `migrate()` may throw.
+        lists = writer
+        lookups = writer
         try migrate()
-        try db.run("INSERT OR IGNORE INTO library(key, value) VALUES('created_at', ?)",
-                   [String((existingDate ?? Date()).timeIntervalSince1970)])
+        try main.run("INSERT OR IGNORE INTO library(key, value) VALUES('created_at', ?)",
+                     [String((existingDate ?? Date()).timeIntervalSince1970)])
+        lists = Self.openReader(path: url.path) ?? writer
+        lookups = Self.openReader(path: url.path) ?? writer
+    }
+
+    /// A reader that cannot be opened (an odd file system) is replaced by the writer: slower, still correct.
+    private static func openReader(path: String) -> Connection? {
+        guard let db = try? SQLiteDB(path: path, readOnly: true),
+              (try? db.exec("PRAGMA temp_store=MEMORY;")) != nil else { return nil }
+        return Connection(db)
     }
 
     private func sync<T>(_ body: () throws -> T) rethrows -> T {
-        lock.lock()
-        defer { lock.unlock() }
-        return try body()
+        try writer.sync { _ in try body() }
     }
 
     // MARK: - Schema
@@ -136,7 +186,6 @@ public final class LibraryIndex: @unchecked Sendable {
           thumb_pack INTEGER, thumb_offset INTEGER, thumb_length INTEGER,
           thumb_state INTEGER NOT NULL DEFAULT 0
         );
-        CREATE INDEX IF NOT EXISTS items_sort ON items(coalesce(created_at, file_mtime));
         CREATE INDEX IF NOT EXISTS items_meta ON items(meta_state);
         CREATE INDEX IF NOT EXISTS items_thumb ON items(thumb_state);
         CREATE VIRTUAL TABLE IF NOT EXISTS items_fts USING fts5(
@@ -199,6 +248,23 @@ public final class LibraryIndex: @unchecked Sendable {
                 try db.run("INSERT OR REPLACE INTO library(key, value) VALUES('schema_version', '3')")
             }
         }
+        if version < 4 {
+            // One index that holds everything the grid, the counts, the facets and the summary read,
+            // in date order: those queries walk it and never touch the wide rows (prompt, XMP). On a
+            // 100k library it is about 15 MB and builds in a fraction of a second. It replaces the
+            // plain date index. The name index gives the first rows of a name-sorted view at once.
+            try db.transaction {
+                try db.exec("""
+                CREATE INDEX IF NOT EXISTS items_browse ON items(
+                  coalesce(created_at, file_mtime), id, rel_path, width, height, thumb_pack, thumb_offset, thumb_length,
+                  source, aspect, kind, orientation, mj_version, camera, file_size,
+                  (prompt_raw IS NOT NULL AND prompt_raw != ''));
+                CREATE INDEX IF NOT EXISTS items_name ON items(file_name COLLATE NOCASE);
+                DROP INDEX IF EXISTS items_sort;
+                """)
+                try db.run("INSERT OR REPLACE INTO library(key, value) VALUES('schema_version', '4')")
+            }
+        }
     }
 
     /// Refreshes the query planner's statistics (sampled, so cheap even on 100k rows). Without
@@ -214,7 +280,7 @@ public final class LibraryIndex: @unchecked Sendable {
     }
 
     public func value(forKey key: String) throws -> String? {
-        try sync {
+        try lookups.sync { db in
             var v: String?
             try db.query("SELECT value FROM library WHERE key = ?", [key]) { v = $0.string(0) }
             return v
@@ -224,38 +290,6 @@ public final class LibraryIndex: @unchecked Sendable {
     /// When this library was first opened on this Mac.
     public func createdAt() throws -> Date? {
         try value(forKey: "created_at").flatMap(Double.init).map { Date(timeIntervalSince1970: $0) }
-    }
-
-    // MARK: - Summary
-
-    /// Totals for the items a filter and search would show.
-    public func summary(filter: FilterState = FilterState(), search: String? = nil, folder: Int64? = nil) throws -> LibrarySummary {
-        try sync {
-            let (w, args) = Self.whereClause(filter, search: search, scope: try scopeClause(folder))
-            var s = LibrarySummary()
-            try db.query("""
-            SELECT count(*), coalesce(sum(file_size), 0), min(\(Self.dateExpr)), max(\(Self.dateExpr)),
-                   coalesce(sum(prompt_raw IS NOT NULL AND prompt_raw != ''), 0)
-            FROM \(itemsTable(folder)) WHERE \(w)
-            """, args) { r in
-                s.total = Int(r.int(0))
-                s.totalBytes = r.int(1)
-                s.oldest = r.double(2).map { Date(timeIntervalSince1970: $0) }
-                s.newest = r.double(3).map { Date(timeIntervalSince1970: $0) }
-                s.withPrompt = Int(r.int(4))
-            }
-            func group(_ column: String) throws -> [FacetValue] {
-                var out: [FacetValue] = []
-                try db.query("""
-                SELECT \(column), count(*) AS n FROM \(itemsTable(folder)) WHERE \(w) AND \(column) IS NOT NULL
-                GROUP BY \(column) ORDER BY n DESC
-                """, args) { r in out.append(FacetValue(value: r.string(0) ?? "", count: Int(r.int(1)))) }
-                return out
-            }
-            s.kinds = try group("items.kind")
-            s.sources = try group("items.source")
-            return s
-        }
     }
 
     // MARK: - Files
@@ -357,8 +391,7 @@ public final class LibraryIndex: @unchecked Sendable {
     }
 
     public func dirID(forPath path: String) throws -> Int64? {
-        try sync {
-            if let id = dirCache[path] { return id }
+        try lookups.sync { db in
             var id: Int64?
             try db.query("SELECT id FROM dirs WHERE path = ?", [path]) { id = $0.int(0) }
             return id
@@ -368,7 +401,7 @@ public final class LibraryIndex: @unchecked Sendable {
     /// Every folder with its counts, in no particular order. Built from one grouped read of the
     /// folder index and an in-memory roll-up, so it stays cheap on 100k items.
     public func directoryTree() throws -> [DirNode] {
-        try sync {
+        try lists.sync { db in
             var direct: [Int64: Int] = [:]
             try db.query("SELECT dir_id, count(*) FROM items WHERE dir_id IS NOT NULL GROUP BY dir_id") { direct[$0.int(0)] = Int($0.int(1)) }
             var rootID: Int64 = -1
@@ -388,25 +421,6 @@ public final class LibraryIndex: @unchecked Sendable {
             }
             return nodes
         }
-    }
-
-    /// SQL that limits a query to one folder and everything below it, as an integer match on `dir_id`.
-    /// A leaf folder is a plain equality; a folder with subfolders walks the (small) `dirs` table.
-    private func scopeClause(_ folder: Int64?) throws -> (String, [Any?])? {
-        guard let folder else { return nil }
-        var hasChildren = false
-        try db.query("SELECT 1 FROM dirs WHERE parent_id = ? LIMIT 1", [folder]) { _ in hasChildren = true }
-        if !hasChildren { return ("items.dir_id = ?", [folder]) }
-        return ("""
-        items.dir_id IN (WITH RECURSIVE sub(id) AS (SELECT ? UNION ALL SELECT d.id FROM dirs d JOIN sub ON d.parent_id = sub.id) SELECT id FROM sub)
-        """, [folder])
-    }
-
-    /// `items`, forced onto the folder index when a scope is set. Without the hint SQLite, which has no
-    /// statistics on a fresh library, prefers a big source or full-text match and filters the folder
-    /// afterwards (40 to 90 ms on a subtree of 8k in 100k; with the hint 1 to 15 ms).
-    private func itemsTable(_ folder: Int64?) -> String {
-        folder == nil ? "items" : "items INDEXED BY items_dir_sort"
     }
 
     // MARK: - Metadata
@@ -471,18 +485,28 @@ public final class LibraryIndex: @unchecked Sendable {
     }
 
     public func saveThumbnail(id: Int64, _ loc: ThumbnailLocation?) throws {
+        try saveThumbnails([(id, loc)])
+    }
+
+    /// Records a batch of thumbnails in one transaction. `nil` marks a failure.
+    public func saveThumbnails(_ batch: [(id: Int64, location: ThumbnailLocation?)]) throws {
+        guard !batch.isEmpty else { return }
         try sync {
-            if let loc {
-                try db.run("UPDATE items SET thumb_pack = ?, thumb_offset = ?, thumb_length = ?, thumb_state = 1 WHERE id = ?",
-                           [loc.pack, loc.offset, loc.length, id])
-            } else {
-                try db.run("UPDATE items SET thumb_state = 2 WHERE id = ?", [id])
+            try db.transaction {
+                for (id, loc) in batch {
+                    if let loc {
+                        try db.run("UPDATE items SET thumb_pack = ?, thumb_offset = ?, thumb_length = ?, thumb_state = 1 WHERE id = ?",
+                                   [loc.pack, loc.offset, loc.length, id])
+                    } else {
+                        try db.run("UPDATE items SET thumb_state = 2 WHERE id = ?", [id])
+                    }
+                }
             }
         }
     }
 
     public func thumbnailLocation(id: Int64) throws -> ThumbnailLocation? {
-        try sync {
+        try lookups.sync { db in
             var loc: ThumbnailLocation?
             try db.query("SELECT thumb_pack, thumb_offset, thumb_length FROM items WHERE id = ? AND thumb_state = 1", [id]) { r in
                 loc = ThumbnailLocation(pack: Int(r.int(0)), offset: r.int(1), length: Int(r.int(2)))
@@ -498,230 +522,6 @@ public final class LibraryIndex: @unchecked Sendable {
                 out.append(PendingItem(id: r.int(0), relPath: r.string(1)!, kind: ItemKind(rawValue: r.string(2)!) ?? .other, mtime: r.double(3) ?? 0))
             }
             return out
-        }
-    }
-
-    // MARK: - Filtering
-
-    static let dateExpr = "coalesce(items.created_at, items.file_mtime)"
-
-    /// WHERE clause for `filter` and `search`, leaving out `excluding` (for facet counts).
-    static func whereClause(_ f: FilterState, search: String?, excluding: Facet? = nil, scope: (String, [Any?])? = nil) -> (String, [Any?]) {
-        var parts: [String] = []
-        var args: [Any?] = []
-        if let scope { parts.append(scope.0); args.append(contentsOf: scope.1) }
-        func placeholders(_ n: Int) -> String { Array(repeating: "?", count: n).joined(separator: ",") }
-        func inList(_ column: String, _ values: [String]) {
-            parts.append("\(column) IN (\(placeholders(values.count)))")
-            args.append(contentsOf: values)
-        }
-        if let q = ftsQuery(search) {
-            parts.append("items.id IN (SELECT rowid FROM items_fts WHERE items_fts MATCH ?)")
-            args.append(q)
-        }
-        if excluding != .type, !f.types.isEmpty { inList("items.kind", f.types.sorted()) }
-        if excluding != .shape, f.hasShape {
-            var ors: [String] = []
-            if !f.orientations.isEmpty {
-                ors.append("items.orientation IN (\(placeholders(f.orientations.count)))")
-                args.append(contentsOf: f.orientations.map(\.rawValue).sorted() as [String])
-            }
-            if !f.ratios.isEmpty {
-                ors.append("items.aspect IN (\(placeholders(f.ratios.count)))")
-                args.append(contentsOf: f.ratios.sorted() as [String])
-            }
-            parts.append("(" + ors.joined(separator: " OR ") + ")")
-        }
-        if excluding != .date {
-            if let from = f.dateFrom { parts.append("\(dateExpr) >= ?"); args.append(from.timeIntervalSince1970) }
-            if let to = f.dateTo { parts.append("\(dateExpr) < ?"); args.append(to.timeIntervalSince1970) }
-        }
-        if excluding != .source, !f.sources.isEmpty { inList("items.source", f.sources.map(\.rawValue).sorted()) }
-        if excluding != .version, !f.versions.isEmpty { inList("items.mj_version", f.versions.sorted()) }
-        if excluding != .camera, !f.cameras.isEmpty { inList("items.camera", f.cameras.sorted()) }
-        if excluding != .param {
-            for p in f.params.sorted() {
-                parts.append("EXISTS (SELECT 1 FROM item_params ip WHERE ip.item_id = items.id AND ip.facet = ?)")
-                args.append(p)
-            }
-        }
-        return (parts.isEmpty ? "1" : parts.joined(separator: " AND "), args)
-    }
-
-    /// `folder` limits the result to that folder and everything below it; `limit` returns only the first rows.
-    public func items(filter: FilterState = FilterState(), search: String? = nil, sort: ItemSort = .newestFirst,
-                      folder: Int64? = nil, limit: Int? = nil) throws -> [BrowseItem] {
-        try sync {
-            let order: String
-            switch sort {
-            case .newestFirst: order = "\(Self.dateExpr) DESC, items.id DESC"
-            case .oldestFirst: order = "\(Self.dateExpr) ASC, items.id ASC"
-            case .name: order = "items.file_name COLLATE NOCASE ASC"
-            }
-            let (w, args) = Self.whereClause(filter, search: search, scope: try scopeClause(folder))
-            var out: [BrowseItem] = []
-            out.reserveCapacity(limit ?? 20_000)
-            let tail = limit.map { " LIMIT \($0)" } ?? ""
-            try db.query("""
-            SELECT id, rel_path, \(Self.dateExpr), width, height, thumb_state, source, aspect FROM \(itemsTable(folder))
-            WHERE \(w) ORDER BY \(order)\(tail)
-            """, args) { r in
-                out.append(BrowseItem(id: r.int(0), relPath: r.string(1)!, sortDate: r.double(2) ?? 0,
-                                      width: r.intOrNil(3), height: r.intOrNil(4), hasThumbnail: r.int(5) == 1,
-                                      source: r.string(6).flatMap(ItemSource.init(rawValue:)), aspect: r.string(7)))
-            }
-            return out
-        }
-    }
-
-    /// Kept for callers that only search and sort.
-    public func gridItems(search: String? = nil, sort: ItemSort = .newestFirst) throws -> [BrowseItem] {
-        try items(search: search, sort: sort)
-    }
-
-    /// Values of `facet` with how many items each would show, applying every
-    /// other active filter. Shape returns orientations as "o:portrait" and ratios as "r:16:9".
-    public func facetCounts(_ facet: Facet, filter: FilterState, search: String?, folder: Int64? = nil) throws -> [FacetValue] {
-        try sync {
-            let (w, args) = Self.whereClause(filter, search: search, excluding: facet, scope: try scopeClause(folder))
-            var out: [FacetValue] = []
-            func group(_ column: String, prefix: String = "", limit: Int = 200) throws {
-                try db.query("""
-                SELECT \(column), count(*) AS n FROM \(itemsTable(folder)) WHERE \(w) AND \(column) IS NOT NULL
-                GROUP BY \(column) ORDER BY n DESC LIMIT \(limit)
-                """, args) { r in out.append(FacetValue(value: prefix + (r.string(0) ?? ""), count: Int(r.int(1)))) }
-            }
-            switch facet {
-            case .type: try group("items.kind")
-            case .shape:
-                try group("items.orientation", prefix: "o:")
-                try group("items.aspect", prefix: "r:", limit: 40)
-            case .source: try group("items.source")
-            case .version: try group("items.mj_version")
-            case .camera: try group("items.camera")
-            case .param:
-                try db.query("""
-                SELECT ip.facet, count(DISTINCT ip.item_id) AS n FROM item_params ip JOIN \(itemsTable(folder)) ON items.id = ip.item_id
-                WHERE \(w) GROUP BY ip.facet ORDER BY n DESC LIMIT 60
-                """, args) { r in out.append(FacetValue(value: r.string(0) ?? "", count: Int(r.int(1)))) }
-            case .date:
-                break
-            }
-            return out
-        }
-    }
-
-    /// Item count per month ("2025-03"), oldest first, ignoring the date filter.
-    public func monthHistogram(filter: FilterState, search: String?, folder: Int64? = nil) throws -> [MonthCount] {
-        try sync {
-            let (w, args) = Self.whereClause(filter, search: search, excluding: .date, scope: try scopeClause(folder))
-            var out: [MonthCount] = []
-            try db.query("""
-            SELECT strftime('%Y-%m', \(Self.dateExpr), 'unixepoch', 'localtime') AS m, count(*) FROM \(itemsTable(folder))
-            WHERE \(w) GROUP BY m ORDER BY m
-            """, args) { r in out.append(MonthCount(month: r.string(0) ?? "", count: Int(r.int(1)))) }
-            return out
-        }
-    }
-
-    /// Turns free text into an FTS5 query: every word must match as a prefix.
-    static func ftsQuery(_ search: String?) -> String? {
-        guard let s = search?.trimmingCharacters(in: .whitespacesAndNewlines), !s.isEmpty else { return nil }
-        let words = s.split(whereSeparator: { $0.isWhitespace || $0.isPunctuation }).map(String.init)
-        guard !words.isEmpty else { return nil }
-        return words.map { "\"" + $0.replacingOccurrences(of: "\"", with: "") + "\"*" }.joined(separator: " ")
-    }
-
-    public func detail(id: Int64) throws -> ItemDetail? {
-        let dec = JSONDecoder()
-        return try sync {
-            var d: ItemDetail?
-            try db.query("""
-            SELECT id, rel_path, kind, file_size, file_mtime, meta_state, width, height, created_at, created_source,
-                   author, prompt_raw, xmp, source, camera_json, generator_json FROM items WHERE id = ?
-            """, [id]) { r in
-                let state = r.int(5)
-                var meta: ItemMetadata?
-                if state == 1 {
-                    meta = ItemMetadata(width: r.intOrNil(6), height: r.intOrNil(7),
-                                        createdAt: r.double(8).map { Date(timeIntervalSince1970: $0) },
-                                        createdSource: CreatedSource(rawValue: r.string(9) ?? "") ?? .file,
-                                        author: r.string(10), promptRaw: r.string(11), xmp: r.string(12),
-                                        source: r.string(13).flatMap(ItemSource.init(rawValue:)),
-                                        camera: r.string(14).flatMap { try? dec.decode(CameraInfo.self, from: Data($0.utf8)) },
-                                        generator: r.string(15).flatMap { try? dec.decode(GeneratorInfo.self, from: Data($0.utf8)) })
-                }
-                d = ItemDetail(id: r.int(0), relPath: r.string(1)!, kind: ItemKind(rawValue: r.string(2)!) ?? .other,
-                               size: r.int(3), mtime: r.double(4) ?? 0, metadata: meta, metadataFailed: state == 2)
-            }
-            return d
-        }
-    }
-
-    public struct Counts: Sendable, Equatable {
-        public var total = 0, metadataDone = 0, metadataFailed = 0, thumbnailsDone = 0, thumbnailsFailed = 0, withPrompt = 0
-        public init() {}
-    }
-
-    public func counts() throws -> Counts {
-        try sync {
-            var c = Counts()
-            try db.query("""
-            SELECT count(*), sum(meta_state = 1), sum(meta_state = 2), sum(thumb_state = 1), sum(thumb_state = 2),
-                   sum(prompt_raw IS NOT NULL AND prompt_raw != '') FROM items
-            """) { r in
-                c.total = Int(r.int(0)); c.metadataDone = Int(r.int(1)); c.metadataFailed = Int(r.int(2))
-                c.thumbnailsDone = Int(r.int(3)); c.thumbnailsFailed = Int(r.int(4)); c.withPrompt = Int(r.int(5))
-            }
-            return c
-        }
-    }
-
-    // MARK: - Saved searches
-
-    public func savedSearches() throws -> [SavedSearch] {
-        let dec = JSONDecoder()
-        return try sync {
-            var out: [SavedSearch] = []
-            try db.query("SELECT id, name, color, folder, position, query FROM saved_searches ORDER BY position, id") { r in
-                let q = (try? dec.decode(SearchQuery.self, from: Data((r.string(5) ?? "{}").utf8))) ?? SearchQuery()
-                out.append(SavedSearch(id: r.int(0), name: r.string(1) ?? "", color: r.string(2) ?? "gray",
-                                       folder: r.string(3), position: Int(r.int(4)), query: q))
-            }
-            return out
-        }
-    }
-
-    @discardableResult
-    public func addSavedSearch(name: String, color: String, folder: String?, query: SearchQuery) throws -> SavedSearch {
-        let json = String(data: try JSONEncoder().encode(query), encoding: .utf8)!
-        return try sync {
-            var pos = 0
-            try db.query("SELECT coalesce(max(position), -1) + 1 FROM saved_searches") { pos = Int($0.int(0)) }
-            try db.run("INSERT INTO saved_searches(name, color, folder, position, query) VALUES(?, ?, ?, ?, ?)",
-                       [name, color, folder, pos, json])
-            return SavedSearch(id: db.lastInsertRowID, name: name, color: color, folder: folder, position: pos, query: query)
-        }
-    }
-
-    public func updateSavedSearch(_ s: SavedSearch) throws {
-        let json = String(data: try JSONEncoder().encode(s.query), encoding: .utf8)!
-        try sync {
-            try db.run("UPDATE saved_searches SET name = ?, color = ?, folder = ?, position = ?, query = ? WHERE id = ?",
-                       [s.name, s.color, s.folder, s.position, json, s.id])
-        }
-    }
-
-    public func deleteSavedSearch(id: Int64) throws {
-        try sync { try db.run("DELETE FROM saved_searches WHERE id = ?", [id]) }
-    }
-
-    /// Rewrites positions in the given order.
-    public func reorderSavedSearches(_ ids: [Int64]) throws {
-        try sync {
-            try db.transaction {
-                for (i, id) in ids.enumerated() { try db.run("UPDATE saved_searches SET position = ? WHERE id = ?", [i, id]) }
-            }
         }
     }
 }

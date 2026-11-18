@@ -8,7 +8,9 @@ struct BlazebunnyApp: App {
     @State private var model = LibraryModel()
 
     init() {
+        Perf.launchMark("appInitStart")
         Typeface.registerBundled()
+        Perf.launchMark("appInit")
     }
 
     var body: some Scene {
@@ -16,9 +18,7 @@ struct BlazebunnyApp: App {
             ContentView(model: model)
                 .frame(minWidth: 1000, minHeight: 600)
         }
-        Settings {
-            PreferencesView()
-        }
+        // These belong to the main window (they were attached to the Settings scene, where the size did nothing).
         .defaultSize(width: 1440, height: 900)
         .windowToolbarStyle(.unified)
         .commands {
@@ -45,14 +45,18 @@ struct BlazebunnyApp: App {
                     .disabled(model.library == nil)
             }
             CommandGroup(after: .toolbar) {
-                Button(model.fillCells ? "Fit Thumbnails" : "Fill Thumbnails") { model.fillCells.toggle() }
+                // The title is a view of its own: the app's scenes are not rebuilt when it changes.
+                Button { model.fillCells.toggle() } label: { FillMenuTitle(model: model) }
                     .keyboardShortcut("f", modifiers: [.command, .option])
-                Button("Bigger Thumbnails") { model.cellSize = min(360, model.cellSize + 40) }
+                Button("Bigger Thumbnails") { model.cellSize = min(DS.Size.thumbnailMax, model.cellSize + DS.Size.thumbnailStep) }
                     .keyboardShortcut("+")
-                Button("Smaller Thumbnails") { model.cellSize = max(80, model.cellSize - 40) }
+                Button("Smaller Thumbnails") { model.cellSize = max(DS.Size.thumbnailMin, model.cellSize - DS.Size.thumbnailStep) }
                     .keyboardShortcut("-")
                 Divider()
             }
+        }
+        Settings {
+            PreferencesView()
         }
     }
 }
@@ -67,6 +71,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { true }
 }
 
+/// The window: sidebar, grid column and inspector. Its body reads only what changes rarely (title,
+/// alerts); everything that changes often (the grid's items, the scan's progress, thumbnail size,
+/// the selection) is read by a small view of its own, so a tick of one never redraws the others.
 struct ContentView: View {
     @Bindable var model: LibraryModel
     @State private var showInspector = true
@@ -86,107 +93,22 @@ struct ContentView: View {
             SidebarView(model: model)
                 .navigationSplitViewColumnWidth(min: 220, ideal: 248, max: 340)
         } detail: {
-            VStack(spacing: 0) {
-                if model.library == nil {
-                    ContentUnavailableView {
-                        Label("Blazebunny", systemImage: "hare")
-                    } description: {
-                        Text("Hops through your archive faster than you can scroll.\nOpen a folder of images to start. Blazebunny only reads it.")
-                    } actions: {
-                        Button("Open Folder…") { model.openFolderPanel() }.keyboardShortcut("o")
-                    }
-                } else {
-                    // One row: what you are looking at, then how to narrow it.
-                    HStack(spacing: 0) {
-                        PageHeader(title: model.viewTitle, subtitle: subtitle, isGhost: model.currentIsGhost,
-                                   contextKind: model.contextKind, crumbs: model.contextCrumbs) { model.selectSidebar($0) }
-                            .padding(.leading, DS.Space.l)
-                        FilterRow(model: model)
-                    }
-                    .frame(height: DS.Size.headerRow)
-                    Divider().overlay(DS.Palette.hairline)
-                    if model.items.isEmpty && model.counts.total > 0 {
-                        ContentUnavailableView {
-                            Label("No Matches", systemImage: "line.3.horizontal.decrease.circle")
-                        } description: {
-                            Text(model.query.filter.isEmpty && model.query.text.isEmpty && model.query.folder != nil
-                                 ? "No images in this folder."
-                                 : model.query.filter.isEmpty && !model.query.text.isEmpty
-                                 ? "No images match “\(model.query.text)”."
-                                 : "No images match these filters.")
-                        } actions: {
-                            Button("Clear All") { model.clearAll() }
-                                .disabled(model.query.filter.isEmpty && model.query.text.isEmpty)
-                        }
-                        .frame(maxHeight: .infinity)
-                    } else if model.items.isEmpty && model.progress.map({ $0.phase != .done }) ?? true {
-                        ContentUnavailableView {
-                            Label("Looking for images…", systemImage: "magnifyingglass")
-                        } description: {
-                            Text(model.isOnline ? "Listing the folder. This can take a while on a large or external disk."
-                                                : "The folder is not connected.")
-                        }
-                        .frame(maxHeight: .infinity)
-                    } else if model.items.isEmpty {
-                        ContentUnavailableView("No Images", systemImage: "photo.on.rectangle",
-                                               description: Text("This folder has no supported images."))
-                            .frame(maxHeight: .infinity)
-                    } else {
-                        GridView(model: model, items: model.items, cellSize: model.cellSize, fill: model.fillCells,
-                                 sections: model.query.sort.isByDate)
-                    }
+            DetailColumn(model: model)
+                .inspector(isPresented: $showInspector) {
+                    InspectorView(model: model)
+                        .inspectorColumnWidth(min: 300, ideal: 352, max: 520)
                 }
-                StatusBar(model: model)
-            }
-            .ghostOutline(model.currentIsGhost)
-            .inspector(isPresented: $showInspector) {
-                InspectorView(model: model)
-                    .id(model.detail?.id)
-                    .inspectorColumnWidth(min: 300, ideal: 352, max: 520)
-            }
         }
-        .navigationTitle(model.viewTitle)
         .toolbar(removing: .title)
         .background { WindowBackdrop() }
         .preferredColorScheme(.dark)
         .searchable(text: $model.query.text, placement: .toolbar, prompt: "Search prompts and names")
         .searchFocused($searchFocused)
         .onChange(of: model.searchFocusRequest) { _, _ in searchFocused = true }
+        .onReceive(NotificationCenter.default.publisher(for: .benchToggleInspector)) { _ in showInspector.toggle() }
         .toolbar {
-            ToolbarItemGroup {
-                Picker("Thumbnails", selection: $model.fillCells) {
-                    Text("Fill").tag(true)
-                    Text("Fit").tag(false)
-                }
-                .pickerStyle(.segmented)
-                .help("Fill crops thumbnails to squares; Fit shows whole images (⌥⌘F)")
-                Slider(value: $model.cellSize, in: 80...360) { Text("Thumbnail Size") }
-                    .frame(width: 100)
-                    .help("Thumbnail size (⌘+ / ⌘−)")
-                Picker("Sort", selection: $model.query.sort) {
-                    ForEach(ItemSort.allCases, id: \.self) { Text($0.title).tag($0) }
-                }
-                .pickerStyle(.menu)
-                .help("Sort order. Dates are the ones embedded in the file when present.")
-            }
-            ToolbarItem {
-                if let s = model.activeSavedSearch, model.savedSearchIsModified {
-                    // Saving a new search is the safe primary action; overwriting is a menu choice.
-                    Menu {
-                        Button("Save as New Search…") { showSave = true }
-                        Button("Update “\(s.name)” with Current Filters") { model.updateSavedSearch(s.id) }
-                    } label: {
-                        Label("Save Search", systemImage: "bookmark.fill")
-                    } primaryAction: {
-                        showSave = true
-                    }
-                    .help("Save these filters as a new search. “\(s.name)” has changed: open the menu to update it instead.")
-                } else {
-                    Button { showSave = true } label: { Label("Save Search", systemImage: "bookmark") }
-                        .help("Save the current filters and search as a sidebar item (⌘S)")
-                        .disabled(model.library == nil)
-                }
-            }
+            ToolbarItemGroup { ThumbnailControls(model: model) }
+            ToolbarItem { SaveSearchButton(model: model, showSave: $showSave) }
             ToolbarItem {
                 Button { showInspector.toggle() } label: { Label("Inspector", systemImage: "sidebar.right") }
                     .help("Show or hide the inspector (⌥⌘I)")
@@ -205,15 +127,154 @@ struct ContentView: View {
             Text(model.errorMessage ?? "")
         }
     }
+}
+
+struct FillMenuTitle: View {
+    let model: LibraryModel
+    var body: some View { Text(model.fillCells ? "Fit Thumbnails" : "Fill Thumbnails") }
+}
+
+/// Fill or fit, thumbnail size and sort order: the toolbar's grid controls.
+struct ThumbnailControls: View {
+    @Bindable var model: LibraryModel
+
+    var body: some View {
+        Picker("Thumbnails", selection: $model.fillCells) {
+            Text("Fill").tag(true)
+            Text("Fit").tag(false)
+        }
+        .pickerStyle(.segmented)
+        .help("Fill crops thumbnails to squares; Fit shows whole images (⌥⌘F)")
+        Slider(value: $model.cellSize, in: DS.Size.thumbnailMin...DS.Size.thumbnailMax) { Text("Thumbnail Size") }
+            .frame(width: DS.Size.toolbarSlider)
+            .help("Thumbnail size (⌘+ / ⌘−)")
+        Picker("Sort", selection: $model.query.sort) {
+            ForEach(ItemSort.allCases, id: \.self) { Text($0.title).tag($0) }
+        }
+        .pickerStyle(.menu)
+        .help("Sort order. Dates are the ones embedded in the file when present.")
+    }
+}
+
+struct SaveSearchButton: View {
+    let model: LibraryModel
+    @Binding var showSave: Bool
+
+    var body: some View {
+        if let s = model.activeSavedSearch, model.savedSearchIsModified {
+            // Saving a new search is the safe primary action; overwriting is a menu choice.
+            Menu {
+                Button("Save as New Search…") { showSave = true }
+                Button("Update “\(s.name)” with Current Filters") { model.updateSavedSearch(s.id) }
+            } label: {
+                Label("Save Search", systemImage: "bookmark.fill")
+            } primaryAction: {
+                showSave = true
+            }
+            .help("Save these filters as a new search. “\(s.name)” has changed: open the menu to update it instead.")
+        } else {
+            Button { showSave = true } label: { Label("Save Search", systemImage: "bookmark") }
+                .help("Save the current filters and search as a sidebar item (⌘S)")
+                .disabled(model.library == nil)
+        }
+    }
+}
+
+/// The middle column: header row, grid (or what stands in for it) and the status bar.
+struct DetailColumn: View {
+    let model: LibraryModel
+
+    var body: some View {
+        VStack(spacing: 0) {
+            if model.library == nil {
+                ContentUnavailableView {
+                    Label("Blazebunny", systemImage: "hare")
+                } description: {
+                    Text("Hops through your archive faster than you can scroll.\nOpen a folder of images to start. Blazebunny only reads it.")
+                } actions: {
+                    Button("Open Folder…") { model.openFolderPanel() }.keyboardShortcut("o")
+                }
+            } else {
+                HeaderRow(model: model)
+                Divider().overlay(DS.Palette.hairline)
+                GridArea(model: model)
+            }
+            StatusBar(model: model)
+        }
+        .ghostOutline(model.currentIsGhost)
+        .navigationTitle(model.viewTitle)
+    }
+}
+
+/// One row: what you are looking at, then how to narrow it.
+struct HeaderRow: View {
+    let model: LibraryModel
+
+    var body: some View {
+        HStack(spacing: 0) {
+            PageHeader(title: model.viewTitle, subtitle: subtitle, isGhost: model.currentIsGhost,
+                       contextKind: model.contextKind, crumbs: model.contextCrumbs) { model.selectSidebar($0) }
+                .padding(.leading, DS.Space.l)
+            FilterRow(model: model)
+        }
+        .frame(height: DS.Size.headerRow)
+    }
 
     var subtitle: String {
-        guard model.library != nil else { return "" }
         // Only the first screen is loaded yet: do not show a count that is about to change.
         if model.isPartialPage { return "" }
         // The total of what is being browsed: the library, or the open folder with everything below it.
         let total = model.query.folder.flatMap { model.folderTree.nodes[$0]?.subtreeCount } ?? model.counts.total
-        if model.items.count == total { return "\(total.formatted()) images" }
-        return "\(model.items.count.formatted()) of \(total.formatted()) images"
+        let shown = model.grid.items.count
+        if shown == total { return "\(total.formatted()) images" }
+        return "\(shown.formatted()) of \(total.formatted()) images"
+    }
+}
+
+/// The grid, or the message that stands in for it when there is nothing to show.
+struct GridArea: View {
+    let model: LibraryModel
+
+    var body: some View {
+        switch model.contentState {
+        case .grid:
+            GridHost(model: model)
+        case .noMatches:
+            ContentUnavailableView {
+                Label("No Matches", systemImage: "line.3.horizontal.decrease.circle")
+            } description: {
+                Text(model.query.filter.isEmpty && model.query.text.isEmpty && model.query.folder != nil
+                     ? "No images in this folder."
+                     : model.query.filter.isEmpty && !model.query.text.isEmpty
+                     ? "No images match “\(model.query.text)”."
+                     : "No images match these filters.")
+            } actions: {
+                Button("Clear All") { model.clearAll() }
+                    .disabled(model.query.filter.isEmpty && model.query.text.isEmpty)
+            }
+            .frame(maxHeight: .infinity)
+        case .looking:
+            ContentUnavailableView {
+                Label("Looking for images…", systemImage: "magnifyingglass")
+            } description: {
+                Text(model.isOnline ? "Listing the folder. This can take a while on a large or external disk."
+                                    : "The folder is not connected.")
+            }
+            .frame(maxHeight: .infinity)
+        case .noImages:
+            ContentUnavailableView("No Images", systemImage: "photo.on.rectangle",
+                                   description: Text("This folder has no supported images."))
+                .frame(maxHeight: .infinity)
+        }
+    }
+}
+
+/// Reads exactly what the grid needs, so nothing else that changes in the model reaches it.
+struct GridHost: View {
+    let model: LibraryModel
+
+    var body: some View {
+        GridView(model: model, revision: model.grid.revision, cellSize: model.cellSize, fill: model.fillCells)
     }
 }
 
@@ -239,7 +300,7 @@ struct PageHeader: View {
 
     private var titleRow: some View {
         HStack(alignment: .firstTextBaseline, spacing: DS.Space.s) {
-            if isGhost { GhostIcon(size: 18).alignmentGuide(.firstTextBaseline) { $0[.bottom] - 2 } }
+            if isGhost { GhostIcon(size: DS.Size.iconTitle).alignmentGuide(.firstTextBaseline) { $0[.bottom] - 2 } }
             Text(title)
                 .dsText(.title)
                 .lineLimit(1)

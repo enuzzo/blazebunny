@@ -1,6 +1,7 @@
 import SwiftUI
 import AppKit
 import CoreText
+import os
 
 /// The app's typeface: Space Grotesk for text, Space Mono for numbers and data.
 /// Both are bundled (SIL OFL, see NOTICE) and can be switched off in Preferences,
@@ -18,10 +19,9 @@ enum Typeface {
         }
     }
 
-    /// False when the fonts could not be loaded, so views fall back to the system font.
-    static var isAvailable: Bool {
-        NSFont(name: "SpaceGrotesk-Regular", size: 12) != nil && NSFont(name: "SpaceMono-Regular", size: 12) != nil
-    }
+    /// False when the fonts could not be loaded, so views fall back to the system font. Looked up
+    /// once, after `registerBundled()` (it used to be asked again for every piece of text drawn).
+    static let isAvailable = NSFont(name: "SpaceGrotesk-Regular", size: 12) != nil && NSFont(name: "SpaceMono-Regular", size: 12) != nil
 
     /// Space Grotesk is a variable font (wght 300 to 700); this maps a SwiftUI weight onto it,
     /// so semibold is a real 600 and not a fallback.
@@ -58,8 +58,29 @@ enum Typeface {
         }
     }
 
-    /// SwiftUI font for a role: bundled when `brand`, otherwise the system font.
+    /// SwiftUI font for a role: bundled when `brand`, otherwise the system font. The app uses about
+    /// twenty fonts in all; each is made once and kept, because every text asks for its font each
+    /// time its view is drawn.
     static func font(size: CGFloat, weight: Font.Weight, role: TextRole, brand: Bool) -> Font {
+        let key = FontKey(size: size, weight: weight, role: role, brand: brand)
+        return fonts.withLock { cache in
+            if let font = cache[key] { return font }
+            let font = makeFont(size: size, weight: weight, role: role, brand: brand)
+            cache[key] = font
+            return font
+        }
+    }
+
+    private struct FontKey: Hashable {
+        var size: CGFloat
+        var weight: Font.Weight
+        var role: TextRole
+        var brand: Bool
+    }
+
+    private static let fonts = OSAllocatedUnfairLock(initialState: [FontKey: Font]())
+
+    private static func makeFont(size: CGFloat, weight: Font.Weight, role: TextRole, brand: Bool) -> Font {
         if brand, let ct = ctFont(size: size, weight: weight, role: role) { return Font(ct) }
         switch role {
         case .text: return .system(size: size, weight: weight)

@@ -2,118 +2,6 @@ import AppKit
 import BlazebunnyCore
 import Observation
 
-/// A folder the user has opened, remembered across launches.
-struct SavedLibrary: Codable, Hashable, Identifiable {
-    var path: String
-    var bookmark: Data?
-    /// A name the user chose. Display only: the folder itself is never renamed.
-    var displayName: String?
-    /// Set for ghost (temporary) libraries: where their index and thumbnails live.
-    /// Never written to disk: a ghost is not remembered across launches.
-    var ghostBase: URL?
-    var isGhost: Bool { ghostBase != nil }
-    private enum CodingKeys: String, CodingKey { case path, bookmark, displayName }
-    var id: String { path }
-    var folderName: String { (path as NSString).lastPathComponent }
-    var name: String { displayName ?? folderName }
-}
-
-/// Built-in views every library offers in the sidebar.
-enum BuiltInView: String, CaseIterable, Identifiable {
-    case all, recent, generated, photos, screenshots
-    var id: String { rawValue }
-    var title: String {
-        switch self {
-        case .all: return "All Images"
-        case .recent: return "Recently Added"
-        case .generated: return "Generated"
-        case .photos: return "Photos"
-        case .screenshots: return "Screenshots"
-        }
-    }
-    var symbol: String {
-        switch self {
-        case .all: return "square.grid.2x2"
-        case .recent: return "clock"
-        case .generated: return "sparkles"
-        case .photos: return "camera"
-        case .screenshots: return "macwindow"
-        }
-    }
-    var filter: FilterState {
-        var f = FilterState()
-        switch self {
-        case .all: break
-        case .recent: f.dateFrom = Calendar.current.date(byAdding: .day, value: -30, to: Date())
-        case .generated: f.sources = [.midjourney, .stableDiffusion]
-        case .photos: f.sources = [.camera]
-        case .screenshots: f.sources = [.screenshot]
-        }
-        return f
-    }
-}
-
-/// What is selected in the sidebar.
-enum SidebarItem: Hashable {
-    case library(String)
-    case view(BuiltInView)
-    case saved(Int64)
-    /// A folder of the open library, by its path relative to the library root.
-    case folder(String)
-}
-
-/// The library's folder tree prepared for the sidebar: children sorted by name once, off the main thread.
-struct FolderTree: Equatable {
-    var nodes: [String: DirNode] = [:]
-    /// Children by parent path ("" is the library root), shown folders only, alphabetical.
-    var children: [String: [DirNode]] = [:]
-
-    init() {}
-
-    /// Folders that hold no image anywhere below them are left out: a folder of documents or an
-    /// empty one would only add noise to an image browser.
-    init(_ list: [DirNode]) {
-        var byID: [Int64: DirNode] = [:]
-        for n in list { byID[n.id] = n }
-        for n in list {
-            nodes[n.path] = n
-            guard n.subtreeCount > 0 else { continue }
-            let parentPath = n.parentID.flatMap { byID[$0]?.path } ?? ""
-            children[parentPath, default: []].append(n)
-        }
-        for key in children.keys {
-            children[key]!.sort { $0.name.localizedStandardCompare($1.name) == .orderedAscending }
-        }
-    }
-    var isEmpty: Bool { children.isEmpty }
-}
-
-/// One visible row of the Folders section.
-struct FolderRow: Identifiable, Equatable {
-    var node: DirNode
-    var id: String { node.path }
-    var hasChildren: Bool
-    var isExpanded: Bool
-}
-
-/// Named colours for saved searches.
-enum TagColor: String, CaseIterable {
-    case orange, red, pink, purple, blue, teal, green, yellow, gray
-    var color: NSColor {
-        switch self {
-        case .orange: return .systemOrange
-        case .red: return .systemRed
-        case .pink: return .systemPink
-        case .purple: return .systemPurple
-        case .blue: return .systemBlue
-        case .teal: return .systemTeal
-        case .green: return .systemGreen
-        case .yellow: return .systemYellow
-        case .gray: return .systemGray
-        }
-    }
-}
-
 @MainActor @Observable
 final class LibraryModel {
     var saved: [SavedLibrary] = []
@@ -121,20 +9,32 @@ final class LibraryModel {
     var ghosts: [SavedLibrary] = []
     var currentPath: String?
     private(set) var library: Library?
-    private(set) var items: [BrowseItem] = []
+    /// What the grid shows: items, month sections and positions, prepared off the main thread.
+    private(set) var grid = GridSnapshot()
+    var items: [BrowseItem] { grid.items }
     var query = SearchQuery() { didSet { if query != oldValue { queryChanged(textOnly: query.filter == oldValue.filter && query.sort == oldValue.sort && query.folder == oldValue.folder) } } }
     var sidebarSelection: SidebarItem?
     var savedSearches: [SavedSearch] = []
-    var cellSize: Double = 160
+    var cellSize: Double = DS.Size.thumbnailDefault
     var fillCells = true
-    var selection: [Int64] = [] { didSet { loadDetail() } }
+    var selection: [Int64] = [] { didSet { if selection != oldValue { selectionChanged(previous: oldValue.last) } } }
     private(set) var detail: ItemDetail?
-    private(set) var progress: ScanProgress?
+    /// The inspector's large image.
+    @ObservationIgnored let preview = PreviewModel()
+    private(set) var progress: ScanProgress? {
+        didSet { let done = progress?.phase == .done; if done != scanFinished { scanFinished = done } }
+    }
+    /// True once the scan of the open library has ended. Kept apart from `progress` so views that only
+    /// need to know this are not redrawn at every step of a scan.
+    private(set) var scanFinished = false
     /// Set when a scan stopped with an error, so the footer says so instead of showing a stale status.
     private(set) var scanFailure: String?
     private(set) var counts = LibraryIndex.Counts()
-    /// What the current view holds (the whole library when no filter is on).
+    /// What the current view holds (the whole library when no filter is on). Read from the index
+    /// only while the inspector shows it (`summaryVisible`).
     private(set) var summary = LibrarySummary()
+    /// Set by the summary view while it is on screen.
+    @ObservationIgnored var summaryVisible = false { didSet { if summaryVisible, !oldValue { loadSummary() } } }
     /// Which copy button was just used, shown as "Copied" for a moment.
     private(set) var copiedKind: CopyKind?
     /// Incremented by Edit > Find, so the toolbar search field takes focus.
@@ -159,8 +59,19 @@ final class LibraryModel {
     @ObservationIgnored private var scanner: FolderScanner?
     @ObservationIgnored private var scanTask: Task<Void, Never>?
     @ObservationIgnored private var reloadTask: Task<Void, Never>?
+    @ObservationIgnored private var summaryTask: Task<Void, Never>?
+    @ObservationIgnored private var detailTask: Task<Void, Never>?
+    @ObservationIgnored private var lastDetailUpdate = Date.distantPast
     @ObservationIgnored private var pendingRefresh = true
     @ObservationIgnored private var lastProgressReload = Date.distantPast
+    /// What the last reload during a scan had seen, to skip reloads when only thumbnails were made.
+    @ObservationIgnored private var lastReloadSignature = [-1, -1]
+    /// Counts each reload asked for, so an older one that finishes late is dropped.
+    @ObservationIgnored private var reloadSerial = 0
+    /// Counts changes of what the user asked to see; the grid goes back to the top when it moves.
+    @ObservationIgnored private var viewSerial = 0
+    /// The scan waits for the first grid of a newly opened library, so launch has the disk to itself.
+    @ObservationIgnored private var scanAfterFirstLoad = false
     @ObservationIgnored private var observers: [Any] = []
 
     private static let savedKey = "savedLibraries"
@@ -169,7 +80,9 @@ final class LibraryModel {
 
     init() {
         // A crashed session may have left ghost data behind: nothing is open yet, so remove it all.
+        Perf.launchMark("modelInitStart")
         GhostStorage.purgeAll()
+        Perf.launchMark("ghostsPurged")
         observers.append(NotificationCenter.default.addObserver(forName: NSApplication.willTerminateNotification, object: nil, queue: .main) { [weak self] _ in
             MainActor.assumeIsolated { self?.closeAllGhosts() }
         })
@@ -189,6 +102,8 @@ final class LibraryModel {
         } else if let path = UserDefaults.standard.string(forKey: Self.currentKey), saved.contains(where: { $0.path == path }) {
             select(path: path)
         }
+        Perf.launchMark("modelInit")
+        PerfBench.startIfRequested(model: self)
     }
 
     var allLibraries: [SavedLibrary] { saved + ghosts }
@@ -196,57 +111,13 @@ final class LibraryModel {
     var currentLibraryName: String { currentLibrary?.name ?? "Blazebunny" }
     var currentIsGhost: Bool { currentLibrary?.isGhost ?? false }
 
-    /// Title of what the grid shows.
-    var viewTitle: String {
-        switch sidebarSelection {
-        case .view(let v): return v.title
-        case .saved(let id): return savedSearches.first(where: { $0.id == id })?.name ?? currentLibraryName
-        case .folder(let path): return (path as NSString).lastPathComponent
-        default: return currentLibraryName
-        }
-    }
+    /// What stands where the grid is.
+    enum ContentState { case grid, noMatches, looking, noImages }
 
-    /// One crumb of the context line above the title.
-    struct Crumb: Identifiable {
-        let id: String
-        let title: String
-        /// Where a click goes; nil for plain text.
-        let target: SidebarItem?
-    }
-
-    /// What the grid shows and where it is, for the 11 pt line above the title.
-    /// For a folder: "Folder · files › Renders" (the library, then the folders above this one).
-    var contextKind: String {
-        if currentIsGhost { return "Ghost · temporary" }
-        switch sidebarSelection {
-        case .folder: return "Folder"
-        case .saved: return "Saved search"
-        case .view: return "View"
-        default: return "Library"
-        }
-    }
-
-    var contextCrumbs: [Crumb] {
-        guard let path = currentPath else { return [] }
-        let libCrumb = Crumb(id: "lib", title: currentLibraryName, target: .library(path))
-        switch sidebarSelection {
-        case .folder(let p):
-            var crumbs = [libCrumb]
-            var acc = ""
-            for part in p.split(separator: "/").dropLast() {
-                acc = acc.isEmpty ? String(part) : acc + "/" + part
-                crumbs.append(Crumb(id: acc, title: String(part), target: .folder(acc)))
-            }
-            return crumbs
-        case .saved:
-            var crumbs = [Crumb(id: "in", title: "live · in " + currentLibraryName, target: .library(path))]
-            if let f = query.folder { crumbs.append(Crumb(id: "f", title: f.replacingOccurrences(of: "/", with: " › "), target: .folder(f))) }
-            return crumbs
-        case .view:
-            return [Crumb(id: "in", title: "in " + currentLibraryName, target: .library(path))]
-        default:
-            return [Crumb(id: "all", title: "everything, subfolders included", target: nil)]
-        }
+    var contentState: ContentState {
+        if !grid.items.isEmpty { return .grid }
+        if counts.total > 0 { return .noMatches }
+        return scanFinished ? .noImages : .looking
     }
 
     // MARK: - Libraries
@@ -322,9 +193,10 @@ final class LibraryModel {
     private func dropCurrentLibrary() {
         stopScan()
         thumbnails.library = nil
+        preview.reset()
         library = nil
         currentPath = nil
-        items = []
+        grid.clear()
         detail = nil
         selection = []
         savedSearches = []
@@ -371,9 +243,11 @@ final class LibraryModel {
         if currentLibrary?.isGhost != true { UserDefaults.standard.set(path, forKey: Self.currentKey) }
         selection = []
         detail = nil
-        items = []
+        grid.clear()
+        preview.reset()
         progress = nil
         errorMessage = nil
+        viewSerial += 1
         query = SearchQuery()
         folderTree = FolderTree()
         expandedFolders = currentLibrary?.isGhost == true ? [] : Self.storedExpansion(for: path)
@@ -384,6 +258,7 @@ final class LibraryModel {
             } else {
                 lib = try Library(root: resolvedURL(for: path))
             }
+            Perf.launchMark("libraryOpened")
             library = lib
             thumbnails.library = lib
             savedSearches = (try? lib.index.savedSearches()) ?? []
@@ -392,9 +267,11 @@ final class LibraryModel {
             library = nil
             return
         }
-        scheduleReload(delay: 0, refresh: true)
+        // First rows at once, then everything; the scan starts when the grid is up.
+        scanAfterFirstLoad = true
+        scheduleReload(phased: true, refresh: true)
+        Perf.launchMark("reloadScheduled")
         refreshOnline()
-        if isOnline { startScan() }
     }
 
     func selectSidebar(_ item: SidebarItem?) {
@@ -479,9 +356,12 @@ final class LibraryModel {
     }
 
     private func refreshOnline() {
-        guard let root = library?.root else { isOnline = false; return }
-        var isDir: ObjCBool = false
-        isOnline = FileManager.default.fileExists(atPath: root.path, isDirectory: &isDir) && isDir.boolValue
+        var online = false
+        if let root = library?.root {
+            var isDir: ObjCBool = false
+            online = FileManager.default.fileExists(atPath: root.path, isDirectory: &isDir) && isDir.boolValue
+        }
+        if online != isOnline { isOnline = online }
     }
 
     private func volumesChanged() {
@@ -491,129 +371,7 @@ final class LibraryModel {
         if !isOnline && was { stopScan() }
     }
 
-    // MARK: - Saved searches
-
-    var savedFolders: [String] {
-        Array(Set(savedSearches.compactMap(\.folder))).sorted { $0.localizedStandardCompare($1) == .orderedAscending }
-    }
-
-    func saveCurrentSearch(name: String, color: TagColor, folder: String?) {
-        guard let lib = library else { return }
-        let folder = folder?.trimmingCharacters(in: .whitespaces).isEmpty == false ? folder : nil
-        if let s = try? lib.index.addSavedSearch(name: name, color: color.rawValue, folder: folder, query: query) {
-            savedSearches.append(s)
-            sidebarSelection = .saved(s.id)
-        }
-    }
-
-    /// Overwrites a saved search with the current query.
-    func updateSavedSearch(_ id: Int64) {
-        guard let lib = library, var s = savedSearches.first(where: { $0.id == id }) else { return }
-        s.query = query
-        try? lib.index.updateSavedSearch(s)
-        savedSearches = (try? lib.index.savedSearches()) ?? savedSearches
-    }
-
-    func renameSavedSearch(_ id: Int64, name: String, color: TagColor, folder: String?) {
-        guard let lib = library, var s = savedSearches.first(where: { $0.id == id }) else { return }
-        s.name = name
-        s.color = color.rawValue
-        s.folder = folder?.trimmingCharacters(in: .whitespaces).isEmpty == false ? folder : nil
-        try? lib.index.updateSavedSearch(s)
-        savedSearches = (try? lib.index.savedSearches()) ?? savedSearches
-    }
-
-    func deleteSavedSearch(_ id: Int64) {
-        guard let lib = library else { return }
-        try? lib.index.deleteSavedSearch(id: id)
-        savedSearches.removeAll { $0.id == id }
-        if sidebarSelection == .saved(id), let p = currentPath { sidebarSelection = .library(p) }
-    }
-
-    func moveSavedSearches(in folder: String?, from: IndexSet, to: Int) {
-        guard let lib = library else { return }
-        var group = savedSearches.filter { $0.folder == folder }
-        group.move(fromOffsets: from, toOffset: to)
-        let others = savedSearches.filter { $0.folder != folder }
-        let ordered = others + group
-        try? lib.index.reorderSavedSearches(ordered.map(\.id))
-        savedSearches = (try? lib.index.savedSearches()) ?? savedSearches
-    }
-
-    /// The saved search shown, if the current query still matches it.
-    var activeSavedSearch: SavedSearch? {
-        guard case .saved(let id) = sidebarSelection else { return nil }
-        return savedSearches.first(where: { $0.id == id })
-    }
-
-    var savedSearchIsModified: Bool {
-        guard let s = activeSavedSearch else { return false }
-        return s.query != query
-    }
-
-    // MARK: - Filters
-
-    /// Midjourney filters are shown when the view is about Midjourney images.
-    var showsMidjourneyGroup: Bool {
-        let f = query.filter
-        if f.sources.contains(.midjourney) || !f.versions.isEmpty || !f.params.isEmpty { return true }
-        if f.sources.isEmpty, let mj = sourceCounts[.midjourney], mj > 0 { return true }
-        return false
-    }
-
-    var showsCameraGroup: Bool {
-        let f = query.filter
-        if f.sources.contains(.camera) || !f.cameras.isEmpty { return true }
-        if f.sources.isEmpty, let c = sourceCounts[.camera], c > 0 { return true }
-        return false
-    }
-
-    func toggle(_ facet: Facet, _ value: String) {
-        var f = query.filter
-        func flip<T: Hashable>(_ set: inout Set<T>, _ v: T) { if set.contains(v) { set.remove(v) } else { set.insert(v) } }
-        switch facet {
-        case .type: flip(&f.types, value)
-        case .shape:
-            if value.hasPrefix("o:"), let o = Orientation(rawValue: String(value.dropFirst(2))) { flip(&f.orientations, o) }
-            if value.hasPrefix("r:") { flip(&f.ratios, String(value.dropFirst(2))) }
-        case .source: if let s = ItemSource(rawValue: value) { flip(&f.sources, s) }
-        case .version: flip(&f.versions, value)
-        case .param: flip(&f.params, value)
-        case .camera: flip(&f.cameras, value)
-        case .date: break
-        }
-        query.filter = f
-    }
-
-    func isOn(_ facet: Facet, _ value: String) -> Bool {
-        let f = query.filter
-        switch facet {
-        case .type: return f.types.contains(value)
-        case .shape:
-            if value.hasPrefix("o:") { return Orientation(rawValue: String(value.dropFirst(2))).map { f.orientations.contains($0) } ?? false }
-            return f.ratios.contains(String(value.dropFirst(2)))
-        case .source: return ItemSource(rawValue: value).map { f.sources.contains($0) } ?? false
-        case .version: return f.versions.contains(value)
-        case .param: return f.params.contains(value)
-        case .camera: return f.cameras.contains(value)
-        case .date: return false
-        }
-    }
-
-    /// Adds one value to a filter (from a click in the inspector).
-    func addFilter(_ facet: Facet, _ value: String) {
-        if !isOn(facet, value) { toggle(facet, value) }
-        if facet == .version || facet == .param { query.filter.sources.insert(.midjourney) }
-        if facet == .camera { query.filter.sources.insert(.camera) }
-    }
-
-    func clear(_ facet: Facet) { query.filter.clear(facet) }
-    func clearAll() { query.filter = FilterState(); query.text = "" }
-
-    func setDateRange(from: Date?, to: Date?) {
-        query.filter.dateFrom = from
-        query.filter.dateTo = to
-    }
+    // MARK: - Facet popovers
 
     /// Loads the values of a facet for its popover.
     func loadFacet(_ facet: Facet) {
@@ -631,7 +389,10 @@ final class LibraryModel {
     }
 
     private func queryChanged(textOnly: Bool) {
-        scheduleReload(delay: textOnly ? 0.12 : 0, phased: !textOnly)
+        viewSerial += 1
+        // The first rows follow every change at once, typing included (a few milliseconds). The full
+        // list of a search waits a moment for the next key, so a word typed quickly is read once.
+        scheduleReload(settle: textOnly ? 0.08 : 0, phased: true)
         if let f = openFacet { loadFacet(f) }
     }
 
@@ -646,13 +407,24 @@ final class LibraryModel {
     func startScan() {
         stopScan()
         guard let lib = library else { return }
-        let scanner = FolderScanner(root: lib.root, index: lib.index, thumbnails: lib.thumbnails, ioConcurrency: 2)
+        // How many files are read at once follows the kind of disk (see `VolumeKind`).
+        let scanner = FolderScanner(root: lib.root, index: lib.index, thumbnails: lib.thumbnails)
         self.scanner = scanner
         scanFailure = nil
+        lastReloadSignature = [-1, -1]
         thumbnails.scanner = scanner
+        scanner.onThumbnails = { [weak self] batch in
+            Task { @MainActor in
+                guard let self, self.scanner === scanner else { return }
+                self.thumbnails.noteMade(batch)
+            }
+        }
+        // The scanner reports after every batch; the UI needs it about ten times a second.
+        let throttle = ProgressThrottle()
         scanTask = Task.detached(priority: .utility) { [weak self] in
             do {
                 try await scanner.run { p in
+                    guard throttle.shouldReport(p) else { return }
                     // A cancelled scan may still report once more: ignore it after a switch.
                     Task { @MainActor in
                         guard let self, self.scanner === scanner else { return }
@@ -675,74 +447,185 @@ final class LibraryModel {
         scanner = nil
         thumbnails.scanner = nil
         scanTask = nil
+        scanAfterFirstLoad = false
     }
 
     private func didProgress(_ p: ScanProgress) {
         progress = p
+        // The grid needs new rows when files were listed or metadata was read (dates, sources and
+        // prompts change what it shows). Thumbnails reach the cells on their own (`noteMade`), so a
+        // scan that is only making thumbnails reloads nothing until it is done.
+        let signature = [p.total, p.metadataDone]
         let interval: TimeInterval = items.isEmpty ? 0.3 : 3
-        if p.phase == .done || Date().timeIntervalSince(lastProgressReload) > interval {
+        if p.phase == .done || (signature != lastReloadSignature && Date().timeIntervalSince(lastProgressReload) > interval) {
             lastProgressReload = Date()
-            scheduleReload(delay: 0, refresh: true)
+            lastReloadSignature = signature
+            scheduleReload(refresh: true)
         }
-        // Thumbnails are made alongside metadata, so retry as soon as any exist.
-        if p.thumbnailsDone > 0 || p.phase == .done { thumbnails.retryMissing() }
     }
 
     // MARK: - Grid data
 
-    /// Reloads what the grid shows. `phased` first publishes the first screen of rows (a few ms even on
-    /// 100k items) and then the full result. `refresh` also re-reads the library-wide numbers (counts,
-    /// folder tree): they do not change when only a filter does, so a filter change skips them.
-    private func scheduleReload(delay: TimeInterval, phased: Bool = false, refresh: Bool = false) {
+    private struct Loaded: Sendable {
+        var snapshot: GridSnapshot?
+        var counts: LibraryIndex.Counts?
+        var tree: FolderTree?
+        var sources: [ItemSource: Int]?
+        var created: Date?
+    }
+
+    /// Reloads what the grid shows. Everything is read and prepared off the main thread, starting at
+    /// once (at launch that is while the window is still being built). `phased` first publishes the
+    /// first screen of rows (well under a millisecond on 100k items, about 15 ms for a search) and
+    /// then the full result, after `settle` seconds without a newer request.
+    /// `refresh` also re-reads the library-wide numbers (counts, folder tree): they do not change when
+    /// only a filter does, so a filter change skips them.
+    private func scheduleReload(settle: TimeInterval = 0, phased: Bool = false, refresh: Bool = false) {
         reloadTask?.cancel()
         pendingRefresh = pendingRefresh || refresh
         guard let lib = library else { return }
+        reloadSerial += 1
+        let serial = reloadSerial
         let q = query
+        let view = viewSerial
         let doRefresh = pendingRefresh
-        reloadTask = Task { [weak self] in
-            if delay > 0 { try? await Task.sleep(for: .seconds(delay)) }
+        let previous = grid
+        let asked = Perf.now()
+        Perf.signposter.emitEvent("reload.asked")
+        // Only the first page of a view is worth showing early: a refresh of the same view keeps its rows.
+        let wantsFirstPage = phased && previous.view != view
+        // Read after the scan ended, the items carry every thumbnail the scan made.
+        let scanIsOver = scanner == nil || progress?.phase == .done
+        reloadTask = Task.detached(priority: .userInitiated) { [weak self] in
             if Task.isCancelled { return }
-            if phased {
-                let page = await Task.detached(priority: .userInitiated) { () -> [BrowseItem]? in
-                    let folder = q.folder.flatMap { try? lib.index.dirID(forPath: $0) } ?? nil
-                    return try? lib.index.items(filter: q.filter, search: q.text, sort: q.sort, folder: folder, limit: 400)
-                }.value
-                guard !Task.isCancelled, let self, self.library === lib, let page else { return }
-                self.items = page
-                self.isPartialPage = true
+            let index = lib.index
+            let folder = q.folder.flatMap { try? index.dirID(forPath: $0) } ?? nil
+            let sectioned = q.sort.isByDate
+            var shown = previous
+            if wantsFirstPage,
+               let page = try? index.items(filter: q.filter, search: q.text, sort: q.sort, folder: folder, limit: Self.firstPage),
+               let first = GridSnapshot.make(items: page, sectioned: sectioned, view: view, previous: previous) {
+                shown = first
+                let isWhole = page.count < Self.firstPage
+                await self?.publish(Loaded(snapshot: first), serial: serial, library: lib, partial: !isWhole, asked: asked)
             }
-            typealias Result = ([BrowseItem], LibraryIndex.Counts?, FolderTree?, [FacetValue], LibrarySummary, Date?)
-            let result = await Task.detached(priority: .userInitiated) { () -> Result? in
-                let folder = q.folder.flatMap { try? lib.index.dirID(forPath: $0) } ?? nil
-                guard let items = try? lib.index.items(filter: q.filter, search: q.text, sort: q.sort, folder: folder) else { return nil }
-                let counts = doRefresh ? try? lib.index.counts() : nil
-                let tree = doRefresh ? (try? lib.index.directoryTree()).map(FolderTree.init) : nil
-                let sources = (try? lib.index.facetCounts(.source, filter: q.filter, search: q.text, folder: folder)) ?? []
-                let summary = (try? lib.index.summary(filter: q.filter, search: q.text, folder: folder)) ?? LibrarySummary()
-                let created = doRefresh ? (try? lib.index.createdAt()) ?? nil : nil
-                return (items, counts, tree, sources, summary, created)
-            }.value
-            guard !Task.isCancelled, let self, let (items, counts, tree, sources, summary, created) = result, self.library === lib else { return }
-            if doRefresh { self.pendingRefresh = false }
-            self.isPartialPage = false
-            if items != self.items { self.items = items }
-            // An image selected before its metadata was read would stay on "Reading metadata…".
-            if let d = self.detail, d.metadata == nil, !d.metadataFailed {
-                self.detail = try? lib.index.detail(id: d.id)
+            if settle > 0 { try? await Task.sleep(for: .seconds(settle)) }
+            if Task.isCancelled { return }
+            guard let items = try? index.items(filter: q.filter, search: q.text, sort: q.sort, folder: folder) else { return }
+            if Task.isCancelled { return }
+            var loaded = Loaded()
+            loaded.snapshot = GridSnapshot.make(items: items, sectioned: sectioned, view: view, previous: shown)
+            // The filter row only asks for these when no source is selected, so the items answer it.
+            if q.filter.sources.isEmpty { loaded.sources = (loaded.snapshot ?? shown).sourceCounts() }
+            if doRefresh {
+                loaded.counts = try? index.counts()
+                loaded.tree = (try? index.directoryTree()).map(FolderTree.init)
+                loaded.created = (try? index.createdAt()) ?? nil
             }
-            if let counts { self.counts = counts }
-            if let tree, tree != self.folderTree { self.folderTree = tree }
-            if summary != self.summary { self.summary = summary }
-            if doRefresh { self.libraryCreatedAt = created }
-            self.sourceCounts = Dictionary(uniqueKeysWithValues: sources.compactMap { v in ItemSource(rawValue: v.value).map { ($0, v.count) } })
+            await self?.publish(loaded, serial: serial, library: lib, partial: false, refreshed: doRefresh,
+                                scanIsOver: scanIsOver, asked: asked)
+        }
+    }
+
+    /// Rows shown first while the rest of a new view loads.
+    private nonisolated static let firstPage = 400
+
+    private func publish(_ loaded: Loaded, serial: Int, library lib: Library, partial: Bool, refreshed: Bool = false,
+                         scanIsOver: Bool = false, asked: UInt64) {
+        guard serial == reloadSerial, library === lib else { return }
+        if let snapshot = loaded.snapshot { grid = snapshot }
+        if isPartialPage != partial { isPartialPage = partial }
+        if partial {
+            Perf.log("reload.firstPage", Perf.ms(since: asked))
+            return
+        }
+        Perf.log("reload.complete", Perf.ms(since: asked))
+        Perf.signposter.emitEvent("reload.complete")
+        if !grid.items.isEmpty { Perf.launchMark("firstItems") }
+        if refreshed { pendingRefresh = false }
+        if scanIsOver { thumbnails.itemsReloaded() }
+        // An image selected before its metadata was read would stay on "Reading metadata…".
+        if let d = detail, d.metadata == nil, !d.metadataFailed { detail = try? lib.index.detail(id: d.id) }
+        if let counts = loaded.counts, counts != self.counts { self.counts = counts }
+        if let tree = loaded.tree, tree != folderTree { folderTree = tree }
+        if refreshed, loaded.created != libraryCreatedAt { libraryCreatedAt = loaded.created }
+        if let sources = loaded.sources, sources != sourceCounts { sourceCounts = sources }
+        if summaryVisible { loadSummary() }
+        if scanAfterFirstLoad {
+            scanAfterFirstLoad = false
+            if isOnline { startScan() }
+        }
+    }
+
+    /// Reads the summary for the current view. Only called while the inspector shows it.
+    private func loadSummary() {
+        guard let lib = library else { return }
+        let q = query
+        summaryTask?.cancel()
+        summaryTask = Task.detached(priority: .userInitiated) { [weak self] in
+            let folder = q.folder.flatMap { try? lib.index.dirID(forPath: $0) } ?? nil
+            guard !Task.isCancelled, let summary = try? lib.index.summary(filter: q.filter, search: q.text, folder: folder) else { return }
+            await MainActor.run {
+                guard let self, self.library === lib, self.query == q, summary != self.summary else { return }
+                self.summary = summary
+            }
         }
     }
 
     // MARK: - Selection
 
-    private func loadDetail() {
-        guard let id = selection.last, let lib = library else { detail = nil; return }
-        detail = try? lib.index.detail(id: id)
+    /// A point lookup on its own connection: a few microseconds, also during a scan or a reload, so
+    /// it stays on the main thread and the inspector never shows a stale image.
+    private func selectionChanged(previous: Int64?) {
+        detailTask?.cancel()
+        guard let id = selection.last, library != nil else {
+            if detail != nil { detail = nil }
+            preview.clear()
+            return
+        }
+        // The image follows every step at once (it is the grid's thumbnail, already in memory).
+        showPreview(id: id, previous: previous)
+        // The text below it is costly to lay out (10 to 20 ms of the main thread), so while an arrow
+        // key is held it follows about ten times a second, and always ends on the last image.
+        let wait = Self.detailInterval - Date().timeIntervalSince(lastDetailUpdate)
+        if wait <= 0 || detail == nil {
+            loadDetail(id)
+        } else {
+            detailTask = Task { [weak self] in
+                try? await Task.sleep(for: .seconds(wait))
+                guard !Task.isCancelled, let self, self.selection.last == id else { return }
+                self.loadDetail(id)
+            }
+        }
+    }
+
+    private static let detailInterval: TimeInterval = 0.1
+
+    private func loadDetail(_ id: Int64) {
+        lastDetailUpdate = Date()
+        detail = try? library?.index.detail(id: id)
+    }
+
+    private func previewRequest(at position: Int) -> PreviewModel.Request? {
+        guard position >= 0, position < grid.items.count, let lib = library else { return nil }
+        let item = grid.items[position]
+        return PreviewModel.Request(id: item.id, url: lib.root.appendingPathComponent(item.relPath), width: item.width, height: item.height)
+    }
+
+    private func showPreview(id: Int64, previous: Int64?) {
+        guard let position = grid.position(ofID: id), let request = previewRequest(at: position) else { preview.clear(); return }
+        let item = grid.items[position]
+        let from = previous.flatMap { grid.position(ofID: $0) }
+        let direction = from.map { (position - $0).signum() } ?? 0
+        let around = PreviewDecoder.neighbours(of: position, count: grid.items.count, direction: direction)
+        let isVideo = ItemKind(pathExtension: (item.relPath as NSString).pathExtension).isVideo
+        let neighbours = around.compactMap { p -> PreviewModel.Request? in
+            guard !ItemKind(pathExtension: (grid.items[p].relPath as NSString).pathExtension).isVideo else { return nil }
+            return previewRequest(at: p)
+        }
+        let location = thumbnails.location(for: item)
+        preview.show(request, thumbnail: thumbnails.cached(id), decodeOriginal: isOnline && !isVideo, neighbours: neighbours,
+                     loadThumbnail: location.map { loc in { [thumbnails] done in thumbnails.load(id, at: loc, completion: done) } })
     }
 
     func originalURL(_ relPath: String) -> URL? {
@@ -774,81 +657,43 @@ final class LibraryModel {
     }
 
     /// Copies the full path of each selected image, one per line.
+    private func selectedURLs() -> [URL] {
+        selection.compactMap { grid.position(ofID: $0).flatMap { originalURL(grid.items[$0].relPath) } }
+    }
+
     func copyPath() {
-        let byID = Dictionary(uniqueKeysWithValues: items.map { ($0.id, $0) })
-        let paths = selection.compactMap { byID[$0].flatMap { originalURL($0.relPath)?.path } }
+        let paths = selectedURLs().map(\.path)
         guard !paths.isEmpty else { NSSound.beep(); return }
         NSPasteboard.general.clearContents()
         NSPasteboard.general.setString(paths.joined(separator: "\n"), forType: .string)
     }
 
     func revealInFinder() {
-        let byID = Dictionary(uniqueKeysWithValues: items.map { ($0.id, $0) })
-        let urls = selection.compactMap { byID[$0].flatMap { originalURL($0.relPath) } }
+        let urls = selectedURLs()
         guard isOnline, !urls.isEmpty else { NSSound.beep(); return }
         NSWorkspace.shared.activateFileViewerSelecting(urls)
     }
 
     func openOriginal() {
-        guard isOnline, let d = detail, let url = originalURL(d.relPath) else { NSSound.beep(); return }
+        // The selection, not the inspector's detail: that one may be a step behind while arrowing.
+        guard isOnline, let url = selectedURLs().last else { NSSound.beep(); return }
         NSWorkspace.shared.open(url)
     }
 }
 
-/// Loads thumbnails from the packs off the main thread, with a memory cache.
-@MainActor
-final class ThumbnailLoader {
-    var library: Library? { didSet { cache.removeAllObjects(); missing.removeAll(); inFlight.removeAll() } }
-    weak var scanner: FolderScanner?
-    private let cache = NSCache<NSNumber, NSImage>()
-    private var inFlight: [Int64: [(NSImage?) -> Void]] = [:]
-    private(set) var missing = Set<Int64>()
-    var onAvailable: ((Set<Int64>) -> Void)?
+/// Lets a scan's progress through about ten times a second. Phase changes always pass.
+private final class ProgressThrottle: @unchecked Sendable {
+    private let lock = NSLock()
+    private var last = Date.distantPast
+    private var phase: ScanProgress.Phase?
 
-    init() { cache.countLimit = 3000 }
-
-    func cached(_ id: Int64) -> NSImage? { cache.object(forKey: NSNumber(value: id)) }
-
-    func load(_ id: Int64, completion: @escaping (NSImage?) -> Void) {
-        if let img = cached(id) { completion(img); return }
-        if inFlight[id] != nil { inFlight[id]!.append(completion); return }
-        guard let lib = library else { completion(nil); return }
-        inFlight[id] = [completion]
-        Task.detached(priority: .userInitiated) {
-            var cg: CGImage?
-            if let loc = try? lib.index.thumbnailLocation(id: id), let data = try? lib.thumbnails.data(at: loc),
-               let src = CGImageSourceCreateWithData(data as CFData, nil) {
-                cg = CGImageSourceCreateImageAtIndex(src, 0, [kCGImageSourceShouldCacheImmediately: true] as CFDictionary)
-            }
-            let result = cg
-            await MainActor.run { [weak self] in
-                guard let self, self.library === lib else { return }
-                var image: NSImage?
-                if let result {
-                    let img = NSImage(cgImage: result, size: NSSize(width: result.width, height: result.height))
-                    self.cache.setObject(img, forKey: NSNumber(value: id))
-                    image = img
-                    self.missing.remove(id)
-                } else {
-                    self.missing.insert(id)
-                }
-                for c in self.inFlight.removeValue(forKey: id) ?? [] { c(image) }
-            }
+    func shouldReport(_ p: ScanProgress) -> Bool {
+        lock.withLock {
+            let now = Date()
+            if p.phase == phase, p.phase != .done, now.timeIntervalSince(last) < 0.1 { return false }
+            phase = p.phase
+            last = now
+            return true
         }
-    }
-
-    func markMissing(_ id: Int64) { missing.insert(id) }
-
-    /// Asks the scanner to make these thumbnails first.
-    func prioritize(_ ids: [Int64]) {
-        scanner?.prioritize(ids: ids.filter { cached($0) == nil })
-    }
-
-    /// Lets the grid retry items whose thumbnail was not ready before.
-    func retryMissing() {
-        guard !missing.isEmpty else { return }
-        let ids = missing
-        missing.removeAll()
-        onAvailable?(ids)
     }
 }

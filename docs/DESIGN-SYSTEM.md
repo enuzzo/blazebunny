@@ -82,11 +82,17 @@ left-aligned on the same x.
 ## Spacing, size and shape
 
 - 4 pt base grid, 8 pt for layout (`DS.Space`: 4, 8, 12, 16, 24; `iconGap` 6 between a small icon and its
-  label in a control, `pillInset` 10, `iconText` 10 in sidebar rows). 4 pt for tight internals (icon
-  padding, pill padding); 8 and up between components.
+  label in a control, `pillInset` 10, `iconText` 10 in sidebar rows, `sheet` 20 around a sheet, `hairGap` 2
+  above and below a value that becomes a link). 4 pt for tight internals (icon padding, pill padding); 8
+  and up between components.
 - Controls are 28 pt high (`DS.Size.control`); the header row is 52 pt; the footer 32 pt.
-- Radii: 4 / 6 / 8 for small things and thumbnails, 16 for glass panels (all from `DS.Radius`). Capsules
-  for pills. Status badges are `DS.Size.badge` (22) high, whatever their kind.
+- Radii: 2 (`hair`: histogram bars, tiny glyphs) / 4 / 6 / 8 for small things and thumbnails, 12 (`large`)
+  for the ghost outline, 16 for glass panels (all from `DS.Radius`). Capsules for pills: one capsule for the
+  whole filter row (`PillChrome`, used by `PillStyle` and by the filter pills). Status badges are
+  `DS.Size.badge` (22) high, whatever their kind.
+- Grid: thumbnails 80 to 360 pt (160 by default, steps of 40), month header 40 pt, selection ring 2 pt with
+  the image stepping 4 pt back, source badge 18 pt with a 10 pt glyph (`DS.Size.thumbnail*`, `monthHeader`,
+  `selectionRing`, `selectionInset`, `cellBadge`). Popovers 280 / 360 pt wide, sheets 380.
 - Hairline borders at 9% white; one accent at a time; ghost tint (amber) only for ghosts.
 
 ## Sidebar
@@ -146,6 +152,29 @@ session sidebar, without becoming a rainbow. Direction:
   material (solid window colour).
 - Chevron turns with a short spring (off with Reduce Motion).
 
+## Motion
+
+Speed beats flourish (owner, 2026-11-17): motion is there to keep the eye on the same pictures, never to
+decorate. Tokens are in `DS.Motion`.
+
+- **Grid reflow** (`reflowDuration` 0.24 s, ease-out): when the number of columns changes, the thumbnails
+  on screen glide from where they were to where they belong; thumbnails that were not on screen fade in;
+  everything off screen takes its place at once. The picture at the top left stays where it is, so the
+  same images are in view before and after. One mechanism for every cause: a side panel opening or closing,
+  the size slider, ⌘+ and ⌘−.
+- **While a side panel slides** the grid's width changes on every frame. The rows are not laid out again
+  during that time (they keep the width they had, clipped or with a gap at the right); the reflow starts
+  once the width has rested for `reflowSettle` (0.06 s). Dragging the window edge is the user's own
+  movement and reflows live, without a glide.
+- **The size slider** reflows at most every `reflowStep` (0.10 s) while it is dragged; a step that starts
+  while the previous one is still gliding continues from where the thumbnails are.
+- **Fill / Fit** cross-fades the thumbnails on screen (same duration).
+- **Inspector preview**: the grid's thumbnail appears at once; when a sharper image is ready it cross-fades
+  in 0.15 s. A different image never fades (it would smear while arrowing).
+- **Sidebar hover and selection**: `quick` (0.12 s).
+- With Reduce Motion none of these animate: the reflow still waits for the panel and then happens at once.
+- Never animate during a fast scroll; never put anything over the thumbnails.
+
 ## Themes (accent)
 
 Owner (2026-11-17): offer a small choice of accents in Preferences, because people look at many photos for
@@ -185,7 +214,9 @@ object ("Copy Path", "Show in Finder"); a trailing "…" only when a question fo
   custom line shapes where SF has nothing right (the ghost). Bundled icon sets (Lucide, ISC) only
   with a `NOTICE` entry.
 - Icon size follows the text next to it: 14 to 16 pt beside body/label text, 18 pt beside the
-  20 pt title.
+  20 pt title. The scale is in `DS.Size` (`microIcon` 8 inside pills, `dot` 8, `iconSmall` 12,
+  `sidebarGlyph` and `iconBadge` 14, `iconRow` 16, `iconTitle` 18) and symbols are sized with
+  `.dsIcon(...)`, never with a font in a view.
 
 ## Ghost folders
 

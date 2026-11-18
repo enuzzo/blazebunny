@@ -311,8 +311,12 @@ struct PreviewImage: View {
                 Image(decorative: image, scale: 1)
                     .resizable()
                     .aspectRatio(contentMode: .fit)
-                    // The thumbnail and the sharper image are two views, so the swap can cross-fade.
-                    .id(preview.isSharp)
+            }
+            // The sharper image fades in over the thumbnail; the thumbnail is never taken away first.
+            if let sharp = preview.sharpImage {
+                Image(decorative: sharp, scale: 1)
+                    .resizable()
+                    .aspectRatio(contentMode: .fit)
                     .transition(.opacity)
             }
         }

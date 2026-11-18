@@ -20,7 +20,11 @@ final class PreviewModel {
         var height: Int?
     }
 
+    /// The image underneath: the grid thumbnail, or the first image shown for this selection.
     private(set) var image: CGImage?
+    /// The sharper decode of the original, drawn over `image` so it can fade in without the picture
+    /// dipping to the background in between (two views fading out and in showed as a flash).
+    private(set) var sharpImage: CGImage?
     private(set) var imageID: Int64?
     /// Width over height of the selected image, from the grid's item (known before any decode).
     private(set) var aspect: CGFloat = 1
@@ -49,6 +53,7 @@ final class PreviewModel {
         prefetchTask?.cancel()
         cache.removeAll()
         image = nil
+        sharpImage = nil
         imageID = nil
         isSharp = false
     }
@@ -57,6 +62,7 @@ final class PreviewModel {
         currentTask?.cancel()
         prefetchTask?.cancel()
         image = nil
+        sharpImage = nil
         imageID = nil
         isSharp = false
     }
@@ -181,7 +187,8 @@ final class PreviewModel {
     }
 
     private func apply(_ new: CGImage?, _ id: Int64, _ sharp: Bool) {
-        image = new
+        if imageID != id || !sharp { image = new }
+        sharpImage = sharp ? new : nil
         imageID = id
         isSharp = sharp
     }

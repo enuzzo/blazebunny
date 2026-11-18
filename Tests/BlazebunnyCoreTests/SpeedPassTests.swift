@@ -171,7 +171,7 @@ struct SpeedPassTests {
         sqlite3_close(raw)
 
         let idx = try LibraryIndex(url: url)
-        #expect(try idx.value(forKey: "schema_version") == "4")
+        #expect(try idx.value(forKey: "schema_version") == "5")
         let items = try idx.items()
         #expect(items.map(\.relPath) == ["b.png", "set/a.png"])
         #expect(items[1].thumbnail == ThumbnailLocation(pack: 0, offset: 0, length: 10))   // thumbnails kept
@@ -308,9 +308,12 @@ struct SpeedPassTests {
 
     @Test func volumeKindOfATemporaryFolderGivesASafeConcurrency() throws {
         let kind = VolumeKind(of: FileManager.default.temporaryDirectory)
-        #expect([2, 6].contains(kind.recommendedIOConcurrency))
+        #expect((2...12).contains(kind.recommendedIOConcurrency))
         #expect(VolumeKind.rotational.recommendedIOConcurrency == 2 && VolumeKind.unknown.recommendedIOConcurrency == 2)
-        #expect(VolumeKind.solidState.recommendedIOConcurrency == 6)
+        // A solid-state disk: by the number of cores, between 6 and 12.
+        let cores = ProcessInfo.processInfo.activeProcessorCount
+        #expect(VolumeKind.solidState.recommendedIOConcurrency == min(12, max(6, cores - 2)))
+        #expect((6...12).contains(VolumeKind.solidState.recommendedIOConcurrency))
         // A path that does not exist is unknown, never a crash.
         #expect(VolumeKind(of: URL(fileURLWithPath: "/nonexistent-\(UUID().uuidString)/x")) == .unknown)
     }

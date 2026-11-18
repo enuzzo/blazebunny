@@ -100,6 +100,10 @@ final class SQLiteDB {
         func int(_ i: Int32) -> Int64 { sqlite3_column_int64(stmt, i) }
         func intOrNil(_ i: Int32) -> Int? { isNull(i) ? nil : Int(sqlite3_column_int64(stmt, i)) }
         func double(_ i: Int32) -> Double? { isNull(i) ? nil : sqlite3_column_double(stmt, i) }
+        func data(_ i: Int32) -> Data? {
+            guard let p = sqlite3_column_blob(stmt, i) else { return nil }
+            return Data(bytes: p, count: Int(sqlite3_column_bytes(stmt, i)))
+        }
         func string(_ i: Int32) -> String? {
             guard let p = sqlite3_column_text(stmt, i) else { return nil }
             return String(cString: p)

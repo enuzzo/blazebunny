@@ -125,6 +125,6 @@ struct FilterTests {
         #expect(try idx.pendingMetadata(limit: 5).count == 1)  // metadata re-read
         let id = try idx.pendingMetadata(limit: 1)[0].id
         #expect(try idx.thumbnailLocation(id: id) == ThumbnailLocation(pack: 0, offset: 0, length: 10))  // thumbnail kept
-        #expect(try idx.value(forKey: "schema_version") == "4")
+        #expect(try idx.value(forKey: "schema_version") == "5")
     }
 }

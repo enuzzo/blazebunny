@@ -109,7 +109,7 @@ public enum ItemSort: String, Codable, Sendable, CaseIterable {
 /// A reader never waits for the writer, so arrowing through images and reloading the grid stay
 /// quick while a scan writes; a lookup never waits for a long list query either.
 public final class LibraryIndex: @unchecked Sendable {
-    static let schemaVersion = 4
+    static let schemaVersion = 5
 
     final class Connection: @unchecked Sendable {
         let db: SQLiteDB
@@ -263,6 +263,20 @@ public final class LibraryIndex: @unchecked Sendable {
                 DROP INDEX IF EXISTS items_sort;
                 """)
                 try db.run("INSERT OR REPLACE INTO library(key, value) VALUES('schema_version', '4')")
+            }
+        }
+        if version < 5 {
+            // Each thumbnail's colours (`ThumbnailPlaceholder`, 32 bytes), in a table of their own:
+            // the browse index and the grid's query stay exactly as they were, and the app reads this
+            // table once per library. It starts empty; the colours of thumbnails made before are
+            // filled in from the packs in the background (`PlaceholderBackfill`), no disk is read.
+            try db.transaction {
+                try db.exec("""
+                CREATE TABLE IF NOT EXISTS item_placeholders(
+                  item_id INTEGER PRIMARY KEY REFERENCES items(id) ON DELETE CASCADE,
+                  colors BLOB NOT NULL);
+                """)
+                try db.run("INSERT OR REPLACE INTO library(key, value) VALUES('schema_version', '5')")
             }
         }
     }
@@ -484,22 +498,78 @@ public final class LibraryIndex: @unchecked Sendable {
         }
     }
 
-    public func saveThumbnail(id: Int64, _ loc: ThumbnailLocation?) throws {
-        try saveThumbnails([(id, loc)])
+    public func saveThumbnail(id: Int64, _ loc: ThumbnailLocation?, placeholder: ThumbnailPlaceholder? = nil) throws {
+        try saveThumbnails([(id, loc, placeholder)])
     }
 
     /// Records a batch of thumbnails in one transaction. `nil` marks a failure.
     public func saveThumbnails(_ batch: [(id: Int64, location: ThumbnailLocation?)]) throws {
+        try saveThumbnails(batch.map { ($0.id, $0.location, nil) })
+    }
+
+    /// Records a batch of thumbnails, each with its colours when they are known, in one transaction.
+    public func saveThumbnails(_ batch: [(id: Int64, location: ThumbnailLocation?, placeholder: ThumbnailPlaceholder?)]) throws {
         guard !batch.isEmpty else { return }
         try sync {
             try db.transaction {
-                for (id, loc) in batch {
+                for (id, loc, placeholder) in batch {
                     if let loc {
                         try db.run("UPDATE items SET thumb_pack = ?, thumb_offset = ?, thumb_length = ?, thumb_state = 1 WHERE id = ?",
                                    [loc.pack, loc.offset, loc.length, id])
+                        if let placeholder {
+                            try db.run("INSERT OR REPLACE INTO item_placeholders(item_id, colors) VALUES(?, ?)", [id, placeholder.data])
+                        }
                     } else {
                         try db.run("UPDATE items SET thumb_state = 2 WHERE id = ?", [id])
                     }
+                }
+            }
+        }
+    }
+
+    // MARK: - Placeholders
+
+    /// Every thumbnail's colours, by item. One pass over a small table (about 4 MB per 100 000
+    /// items, 30 ms); the app reads it once when a library opens, off the main thread. It goes
+    /// through the lookup connection, so the grid's first rows never wait for it.
+    public func placeholders() throws -> [Int64: ThumbnailPlaceholder] {
+        try lookups.sync { db in
+            var count = 0
+            try db.query("SELECT count(*) FROM item_placeholders") { count = Int($0.int(0)) }
+            var out: [Int64: ThumbnailPlaceholder] = [:]
+            out.reserveCapacity(count)
+            try db.query("SELECT item_id, colors FROM item_placeholders") { r in
+                if let p = r.data(1).flatMap(ThumbnailPlaceholder.init(data:)) { out[r.int(0)] = p }
+            }
+            return out
+        }
+    }
+
+    /// Thumbnails made before placeholders existed: where each one is in the packs.
+    public func thumbnailsWithoutPlaceholder() throws -> [(id: Int64, location: ThumbnailLocation)] {
+        try lookups.sync { db in
+            var out: [(id: Int64, location: ThumbnailLocation)] = []
+            try db.query("""
+            SELECT id, thumb_pack, thumb_offset, thumb_length FROM items INDEXED BY items_browse
+            WHERE thumb_pack IS NOT NULL AND id NOT IN (SELECT item_id FROM item_placeholders)
+            """) { r in
+                out.append((r.int(0), ThumbnailLocation(pack: Int(r.int(1)), offset: r.int(2), length: Int(r.int(3)))))
+            }
+            return out
+        }
+    }
+
+    /// Saves colours worked out from thumbnails that already exist. An item that was deleted or
+    /// whose thumbnail was reset meanwhile is skipped.
+    public func savePlaceholders(_ batch: [(id: Int64, placeholder: ThumbnailPlaceholder)]) throws {
+        guard !batch.isEmpty else { return }
+        try sync {
+            try db.transaction {
+                for (id, placeholder) in batch {
+                    try db.run("""
+                    INSERT OR REPLACE INTO item_placeholders(item_id, colors)
+                    SELECT id, ? FROM items WHERE id = ? AND thumb_state = 1
+                    """, [placeholder.data, id])
                 }
             }
         }

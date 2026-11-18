@@ -91,9 +91,9 @@ final class PreviewModel {
     }
 
     /// Shows `request` now with the best image at hand and upgrades it when the selection rests.
-    /// `thumbnail` is the grid's cached thumbnail, if any; `loadThumbnail` fetches it when it is not
-    /// cached. `decodeOriginal` is false for videos and when the disk is not connected.
-    func show(_ request: Request, thumbnail: CGImage?, decodeOriginal: Bool, neighbours: [Request],
+    /// `thumbnail` is the grid's cached thumbnail, if any (`thumbnailIsWhole` false when it is the
+    /// half-size decode); `loadThumbnail` fetches the whole one when it is not cached. `decodeOriginal` is false for videos and when the disk is not connected.
+    func show(_ request: Request, thumbnail: CGImage?, thumbnailIsWhole: Bool = true, decodeOriginal: Bool, neighbours: [Request],
               loadThumbnail: ((@escaping (CGImage?) -> Void) -> Void)? = nil) {
         currentTask?.cancel()
         prefetchTask?.cancel()
@@ -109,13 +109,14 @@ final class PreviewModel {
                 schedulePrefetch(neighbours, enabled: decodeOriginal)
                 return
             }
-        } else if let thumbnail {
-            set(thumbnail, id: id, sharp: false, animated: false)
         } else {
-            set(nil, id: id, sharp: false, animated: false)
-            loadThumbnail? { [weak self] image in
-                guard let self, self.imageID == id, !self.isSharp, let image else { return }
-                self.set(image, id: id, sharp: false, animated: false)
+            set(thumbnail, id: id, sharp: false, animated: false)
+            // Nothing at hand, or only the half-size decode a small cell uses: get the whole thumbnail.
+            if thumbnail == nil || !thumbnailIsWhole {
+                loadThumbnail? { [weak self] image in
+                    guard let self, self.imageID == id, !self.isSharp, let image else { return }
+                    self.set(image, id: id, sharp: false, animated: false)
+                }
             }
         }
         guard decodeOriginal else { return }

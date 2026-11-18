@@ -3,7 +3,10 @@ import IOKit
 
 /// What kind of disk a folder is on, to decide how many files to read at once.
 public enum VolumeKind: String, Sendable {
-    /// Flash storage: reading several files at once is faster (measured: about 1.8 times faster at 6 than at 2).
+    /// Flash storage: the disk keeps up with any number of readers, so the limit is the processor
+    /// (making a thumbnail is mostly decoding the original). Measured on 12 000 generated PNGs of 1 to
+    /// 11 megapixels, 12 performance and 4 efficiency cores: 122 thumbnails a second with 6 files at
+    /// once, 209 with 12, 251 with 16.
     case solidState
     /// A spinning disk: more than two readers make the head seek back and forth.
     case rotational
@@ -16,7 +19,9 @@ public enum VolumeKind: String, Sendable {
 
     public var recommendedIOConcurrency: Int {
         switch self {
-        case .solidState: return 6
+        // Two cores are left to the app and the system; never fewer than 6 files at once (the old
+        // fixed number), never more than 12 (each file is held whole in memory while it is decoded).
+        case .solidState: return min(12, max(6, ProcessInfo.processInfo.activeProcessorCount - 2))
         case .rotational, .unknown: return 2
         }
     }

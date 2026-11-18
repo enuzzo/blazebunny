@@ -1,7 +1,7 @@
 import Foundation
 import BlazebunnyCore
 
-// bbscopebench [--count N]
+// bbscopebench [--count N] [--extra] [--placeholders] [--reuse <dir>]
 // Builds a generated index (no real files, no real data) and times the folder-scope paths the app uses.
 // 100 top folders x 10 subfolders x (N/1000) files, plus one deep branch.
 
@@ -164,5 +164,51 @@ report("month histogram, whole library (first call)", try ms { _ = try idx.month
 report("month histogram, whole library (again)", try best { _ = try idx.monthHistogram(filter: q, search: nil) })
 _ = folderAll
 print("rss at end: \(Int(rssMB())) MB")
+
+// `--placeholders`: what the thumbnail colours (schema 5) cost: writing them with the thumbnails,
+// the size of the index, reading them all (once per library, off the main thread), and the grid's
+// query before and after (it must not change: the colours are in a table of their own).
+if CommandLine.arguments.contains("--placeholders") {
+    print("-- placeholders (32 bytes of colours per thumbnail, table item_placeholders) --")
+    func indexBytes() -> Int {
+        ["index.sqlite", "index.sqlite-wal"].reduce(0) { total, name in
+            total + (((try? FileManager.default.attributesOfItem(atPath: dir.appendingPathComponent(name).path))?[.size] as? NSNumber)?.intValue ?? 0)
+        }
+    }
+    let ids = try idx.items().map(\.id)
+    let gridBefore = try best { try gridReload(nil, q, nil) }
+    // Thumbnails saved as a scan does (batches of 24), first without colours, then with.
+    func save(withColours: Bool) throws -> Double {
+        try ms {
+            for start in stride(from: 0, to: ids.count, by: 24) {
+                try idx.saveThumbnails(ids[start..<min(ids.count, start + 24)].map { id in
+                    let n = UInt8(truncatingIfNeeded: id)
+                    let colours = withColours ? ThumbnailPlaceholder(samples: (0..<16).map { (r: n &+ UInt8($0), g: n &* 3, b: UInt8($0 * 15)) }) : nil
+                    return (id: id, location: ThumbnailLocation(pack: Int(id) / 4000, offset: (id % 4000) * 61_000, length: 61_000), placeholder: colours)
+                })
+            }
+        }
+    }
+    // The first pass also fills the locations into the browse index; the second writes the same
+    // values again, which is what the pass with colours does too, so the two compare.
+    _ = try save(withColours: false)
+    let plain = try save(withColours: false)
+    let sizeBefore = indexBytes()
+    report("grid reload, whole library (thumbnails saved)", try best { try gridReload(nil, q, nil) }, budget: 150)
+    report("missing placeholders listed (all \(ids.count))", try best { _ = try idx.thumbnailsWithoutPlaceholder() })
+    let coloured = try save(withColours: true)
+    let sizeAfter = indexBytes()
+    report("save \(ids.count) thumbnails, no colours", plain)
+    report("save \(ids.count) thumbnails with colours", coloured)
+    print(String(format: "index size: %.1f MB before, %.1f MB with colours (+%.1f MB)", Double(sizeBefore) / 1e6, Double(sizeAfter) / 1e6, Double(sizeAfter - sizeBefore) / 1e6))
+    let rssBefore = rssMB()
+    var table: [Int64: ThumbnailPlaceholder] = [:]
+    report("read every placeholder (\(ids.count))", try best { table = try idx.placeholders() })
+    print(String(format: "placeholders in memory: %d, about %.1f MB", table.count, rssMB() - rssBefore))
+    report("missing placeholders listed (none left)", try best { _ = try idx.thumbnailsWithoutPlaceholder() })
+    report("grid reload, whole library (before colours: \(String(format: "%.2f", gridBefore)) ms)", try best { try gridReload(nil, q, nil) }, budget: 150)
+    report("grid reload, source filter, whole library", try best { try gridReload(nil, mj, nil) }, budget: 100)
+    report("first 400 rows, whole library", try best { _ = try idx.items(limit: 400) }, budget: 50)
+}
 
 if CommandLine.arguments.contains("--extra") { try runContentionBench(index: idx, count: count, directory: dir, prompts: (0..<64).map(demoPrompt), xmp: xmpPacket) }

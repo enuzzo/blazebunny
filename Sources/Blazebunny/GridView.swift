@@ -76,7 +76,15 @@ struct GridView: NSViewRepresentable {
             }
             c.prioritizeVisible()
             GridStats.applyMs += interval.end()
-            if Perf.isLogging { DispatchQueue.main.async { MainActor.assumeIsolated { Perf.launchMark("gridDisplayed") } } }
+            // Again once the new rows are laid out: right after a reload the grid does not know yet
+            // which cells are on screen, and a first scan then made the thumbnails nobody was looking
+            // at for several seconds (measured on 12 000 files: first thumbnail on screen after 7 s).
+            DispatchQueue.main.async { [weak c] in
+                MainActor.assumeIsolated {
+                    c?.prioritizeVisible()
+                    Perf.launchMark("gridDisplayed")
+                }
+            }
         }
         // After the data, so a new library is laid out at the new size without a glide.
         c.setTargetSize(cellSize)
@@ -95,6 +103,10 @@ struct GridView: NSViewRepresentable {
         /// A thumbnail size chosen while the previous step was still gliding.
         private var pendingTargetSize: CGFloat?
         private var sizeStepInFlight = false
+        /// Where and when the grid last scrolled, to tell a fast scroll from a slow one.
+        private var lastScrollY: CGFloat = 0
+        private var lastScrollAt: UInt64 = 0
+        private var fastScrollUntil: UInt64 = 0
 
         init(model: LibraryModel) { self.model = model }
 
@@ -129,25 +141,79 @@ struct GridView: NSViewRepresentable {
         }
 
         func configure(_ cell: ThumbCell, item: BrowseItem) {
-            model.thumbnails.cancel(cell.loadToken)
+            let thumbnails = model.thumbnails
+            thumbnails.cancel(cell.loadToken)
             cell.loadToken = nil
+            // The same item asked again while its cell is still empty (its thumbnail has just been
+            // made by the scan): the wait began when the cell first showed it, not now.
+            if cell.itemID != item.id || !cell.isEmpty { cell.waitingSince = Perf.now() }
             cell.itemID = item.id
             cell.fill = fill
+            cell.aspect = Self.aspect(of: item)
             cell.describe(name: item.fileName, source: item.source)
-            if let image = model.thumbnails.cached(item.id) {
-                cell.show(image)
+            let detail = neededDetail(for: item)
+            if let image = thumbnails.best(item.id), image.detail >= detail {
+                cell.show(image.image, detail: image.detail)
                 GridStats.cellsShownFromCache += 1
                 return
             }
-            cell.show(nil)
-            guard let location = model.thumbnails.location(for: item) else { return }
+            // A smaller decode of the same thumbnail is closer than its colours; with neither, the
+            // colours stand in while the thumbnail is read.
+            var waitsOnColours = false
+            if let lesser = thumbnails.best(item.id) {
+                cell.show(lesser.image, detail: lesser.detail)
+            } else {
+                cell.show(nil)
+                let placeholder = thumbnails.placeholder(for: item.id)
+                cell.showPlaceholder(placeholder)
+                waitsOnColours = true
+                if placeholder != nil { GridStats.placeholdersShown += 1 }
+            }
+            guard let location = thumbnails.location(for: item) else { return }
             let id = item.id
             cell.askedAt = Perf.now()
-            cell.loadToken = model.thumbnails.load(id, at: location) { [weak cell, weak self] image in
+            cell.loadToken = thumbnails.load(id, at: location, detail: detail) { [weak cell, weak self] image in
                 guard let cell, cell.itemID == id else { return }
                 cell.loadToken = nil
-                cell.show(image)
+                guard let image else { return }
+                let fade = waitsOnColours && (self?.shouldFade(since: cell.waitingSince) ?? false)
+                cell.show(image, detail: detail, fade: fade)
+                if fade { GridStats.fades += 1 }
                 if Perf.isLogging { self?.noteThumbnailShown(cell) }
+            }
+        }
+
+        private static func aspect(of item: BrowseItem) -> CGFloat? {
+            guard let w = item.width, let h = item.height, w > 0, h > 0 else { return nil }
+            return CGFloat(w) / CGFloat(h)
+        }
+
+        /// How much of the stored thumbnail this item's cell can show: the cell's side in pixels,
+        /// times the picture's long side over its short one when the picture fills the cell.
+        func neededDetail(for item: BrowseItem) -> ThumbnailLoader.Detail {
+            guard let layout, let cv = collectionView, !Perf.wholeThumbnailsOnly else { return .full }
+            var pixels = layout.itemSize.width * (cv.window?.backingScaleFactor ?? NSScreen.main?.backingScaleFactor ?? 2)
+            if fill {
+                // A picture of unknown shape may be much wider than the cell: do not guess.
+                guard let aspect = Self.aspect(of: item) else { return .full }
+                pixels *= max(aspect, 1 / aspect)
+            }
+            return .needed(forPixels: pixels)
+        }
+
+        /// A thumbnail that arrives late fades in over its colours; one that is there within a few
+        /// frames just appears, and nothing fades while the grid scrolls fast or with Reduce Motion.
+        private func shouldFade(since waiting: UInt64) -> Bool {
+            Perf.ms(since: waiting) >= DS.Motion.thumbnailFadeAfter * 1000 && !isScrollingFast && !Self.reduceMotion
+                && collectionView?.window != nil
+        }
+
+        /// Cells that show a half-size decode which the new cell size or mode would enlarge get the whole thumbnail.
+        func upgradeVisible() {
+            guard let cv = collectionView else { return }
+            for case let cell as ThumbCell in cv.visibleItems() where cell.shownDetail == .small {
+                if let path = cv.indexPath(for: cell), let item = snapshot.item(at: path), item.id == cell.itemID,
+                   neededDetail(for: item) > .small { configure(cell, item: item) }
             }
         }
 
@@ -199,7 +265,24 @@ struct GridView: NSViewRepresentable {
             }
         }
 
+        /// Scrolling faster than `DS.Motion.fastScroll`, now or a moment ago.
+        var isScrollingFast: Bool { Perf.now() < fastScrollUntil }
+
+        private func noteScroll() {
+            guard let clip = collectionView?.enclosingScrollView?.contentView else { return }
+            let now = Perf.now()
+            let y = clip.bounds.origin.y
+            let seconds = Double(now &- lastScrollAt) / 1e9
+            // Two positions further apart in time than the hold say nothing about the speed now.
+            if lastScrollAt != 0, seconds > 0, seconds < DS.Motion.fastScrollHold, abs(y - lastScrollY) / seconds > DS.Motion.fastScroll {
+                fastScrollUntil = now + UInt64(DS.Motion.fastScrollHold * 1e9)
+            }
+            lastScrollY = y
+            lastScrollAt = now
+        }
+
         @objc func boundsChanged() {
+            noteScroll()
             // Only a running scan cares what is on screen (it makes those thumbnails first).
             guard model.thumbnails.scanner != nil, !prioritizeScheduled else { return }
             prioritizeScheduled = true
@@ -285,6 +368,7 @@ struct GridView: NSViewRepresentable {
             guard fill != newValue, let cv = collectionView else { return }
             fill = newValue
             for case let cell as ThumbCell in cv.visibleItems() { cell.setFill(newValue, animated: !Self.reduceMotion) }
+            upgradeVisible()
         }
 
         private static var reduceMotion: Bool { NSWorkspace.shared.accessibilityDisplayShouldReduceMotion }
@@ -297,7 +381,8 @@ struct GridView: NSViewRepresentable {
         func reflow(animated: Bool = true, _ change: (JustifiedFlowLayout) -> Void) {
             guard let cv = collectionView, let layout, let scroll = cv.enclosingScrollView else { return }
             let interval = Perf.begin("grid.reflow")
-            defer { interval.end() }
+            // Larger cells may need the whole thumbnail where half of it was enough.
+            defer { interval.end(); upgradeVisible() }
             let clip = scroll.contentView
             let animate = animated && !Self.reduceMotion && cv.window != nil
             let visible = clip.documentVisibleRect
@@ -374,6 +459,22 @@ final class GridCollectionView: NSCollectionView {
     weak var model: LibraryModel?
 
     @objc func copy(_ sender: Any?) { model?.copy(.prompt) }
+
+    // Thumbnails are decoded into the window's colour space (it changes with the display).
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        noteColorSpace()
+    }
+
+    override func viewDidChangeBackingProperties() {
+        super.viewDidChangeBackingProperties()
+        noteColorSpace()
+    }
+
+    private func noteColorSpace() {
+        guard let space = window?.colorSpace?.cgColorSpace else { return }
+        model?.thumbnails.displayColorSpace = space
+    }
 
     override func keyDown(with event: NSEvent) {
         if event.keyCode == 36 { model?.openOriginal(); return }  // Return

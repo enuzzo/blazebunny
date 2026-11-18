@@ -12,6 +12,18 @@ enum Perf {
     static let isLogging = logPath != nil
     private static let sink = LogSink(path: logPath)
 
+    /// `BB_THUMB_DELAY_MS=<n>` (only with `BB_PERF_LOG`): every thumbnail arrives that much later, so
+    /// the placeholder colours and the fade can be seen in `BB_SNAPSHOT_DIR` pictures when nobody can
+    /// look at the screen. Development only; nil in normal use.
+    static let thumbnailDelay: Duration? = {
+        guard isLogging, let ms = ProcessInfo.processInfo.environment["BB_THUMB_DELAY_MS"].flatMap(Int.init), ms > 0 else { return nil }
+        return .milliseconds(ms)
+    }()
+
+    /// `BB_WHOLE_THUMBNAILS=1` (only with `BB_PERF_LOG`): small cells decode the whole thumbnail, as
+    /// before the half-size decode, to measure what that one saves. Development only.
+    static let wholeThumbnailsOnly = isLogging && ProcessInfo.processInfo.environment["BB_WHOLE_THUMBNAILS"] == "1"
+
     /// Milliseconds since the process was started (the kernel's start time, so it includes dyld and
     /// everything before `main`).
     static func sinceLaunch() -> Double {

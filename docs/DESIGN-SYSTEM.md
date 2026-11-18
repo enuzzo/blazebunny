@@ -171,6 +171,15 @@ decorate. Tokens are in `DS.Motion`.
 - **Fill / Fit** cross-fades the thumbnails on screen (same duration).
 - **Inspector preview**: the grid's thumbnail appears at once; when a sharper image is ready it cross-fades
   in 0.15 s. A different image never fades (it would smear while arrowing).
+- **Thumbnail placeholder** (2026-11-18): a cell whose thumbnail is not decoded yet shows the picture's
+  colours, 16 samples (4 x 4) stretched and smoothed by the layer, where the picture will be (the whole
+  cell in Fill, the picture's shape in Fit). It is the picture's own colours, not glass and not a blur
+  filter, and it is under the image, never over it. A cell with no thumbnail made yet stays the plain
+  `cellPlaceholder` grey. The thumbnail takes the colours' place at once when it arrives within
+  `thumbnailFadeAfter` (0.05 s: a few frames; a fade there would only add delay) and cross-fades in over
+  them in `thumbnailFade` (0.18 s, ease-out: shorter than the reflow, it happens far more often) when the
+  cell has waited longer: a first scan, a cold start. Never while the grid scrolls faster than
+  `fastScroll` (1 500 pt/s). Numbers and reasons in `docs/MILESTONES.md` ("Thumbnails").
 - **Sidebar hover and selection**: `quick` (0.12 s).
 - With Reduce Motion none of these animate: the reflow still waits for the panel and then happens at once.
 - Never animate during a fast scroll; never put anything over the thumbnails.

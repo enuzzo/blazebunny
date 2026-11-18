@@ -238,6 +238,14 @@ extension DS {
         static let reflowDuration: TimeInterval = 0.24
         static let reflowSettle: TimeInterval = 0.06
         static let reflowStep: TimeInterval = 0.10
+        /// A thumbnail arriving over its placeholder colours: a short cross-fade, only when the cell
+        /// has been waiting at least `thumbnailFadeAfter` (an image that is there within a few frames
+        /// just appears) and the grid is not scrolling faster than `fastScroll` points a second, now
+        /// or within the last `fastScrollHold`.
+        static let thumbnailFade: TimeInterval = 0.18
+        static let thumbnailFadeAfter: TimeInterval = 0.05
+        static let fastScroll: CGFloat = 1500
+        static let fastScrollHold: TimeInterval = 0.2
     }
 }
 

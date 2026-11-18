@@ -58,6 +58,8 @@ final class LibraryModel {
     @ObservationIgnored let thumbnails = ThumbnailLoader()
     @ObservationIgnored private var scanner: FolderScanner?
     @ObservationIgnored private var scanTask: Task<Void, Never>?
+    /// `elapsed` of the newest scan report applied, to drop one that arrives late.
+    @ObservationIgnored private var lastProgressElapsed: TimeInterval = -1
     @ObservationIgnored private var reloadTask: Task<Void, Never>?
     @ObservationIgnored private var summaryTask: Task<Void, Never>?
     @ObservationIgnored private var detailTask: Task<Void, Never>?
@@ -411,12 +413,19 @@ final class LibraryModel {
         let scanner = FolderScanner(root: lib.root, index: lib.index, thumbnails: lib.thumbnails)
         self.scanner = scanner
         scanFailure = nil
+        lastProgressElapsed = -1
         lastReloadSignature = [-1, -1]
         thumbnails.scanner = scanner
         scanner.onThumbnails = { [weak self] batch in
             Task { @MainActor in
                 guard let self, self.scanner === scanner else { return }
                 self.thumbnails.noteMade(batch)
+            }
+        }
+        scanner.onPlaceholders = { [weak self] batch in
+            Task { @MainActor in
+                guard let self, self.scanner === scanner else { return }
+                self.thumbnails.notePlaceholders(batch)
             }
         }
         // The scanner reports after every batch; the UI needs it about ten times a second.
@@ -432,6 +441,8 @@ final class LibraryModel {
                     }
                 }
             } catch {
+                // The label and the kind of error only: the log never holds names or paths.
+                Perf.log("scan.failed \(type(of: error))")
                 await MainActor.run {
                     guard let self, self.scanner === scanner else { return }
                     self.progress = nil
@@ -451,6 +462,11 @@ final class LibraryModel {
     }
 
     private func didProgress(_ p: ScanProgress) {
+        // Each report hops to the main thread on its own and two can arrive out of order (seen on
+        // a scan with nothing to do, whose reports are a millisecond apart: "done" was overwritten
+        // by the report before it and the status stayed on scanning for good).
+        guard p.elapsed >= lastProgressElapsed else { return }
+        lastProgressElapsed = p.elapsed
         progress = p
         // The grid needs new rows when files were listed or metadata was read (dates, sources and
         // prompts change what it shows). Thumbnails reach the cells on their own (`noteMade`), so a
@@ -553,6 +569,8 @@ final class LibraryModel {
         if summaryVisible { loadSummary() }
         if scanAfterFirstLoad {
             scanAfterFirstLoad = false
+            // Colours of thumbnails made by an earlier version come from the packs, disk or no disk.
+            thumbnails.backfillPlaceholders()
             if isOnline { startScan() }
         }
     }
@@ -624,7 +642,9 @@ final class LibraryModel {
             return previewRequest(at: p)
         }
         let location = thumbnails.location(for: item)
-        preview.show(request, thumbnail: thumbnails.cached(id), decodeOriginal: isOnline && !isVideo, neighbours: neighbours,
+        let atHand = thumbnails.best(id)
+        preview.show(request, thumbnail: atHand?.image, thumbnailIsWhole: atHand?.detail != .small,
+                     decodeOriginal: isOnline && !isVideo, neighbours: neighbours,
                      loadThumbnail: location.map { loc in { [thumbnails] done in thumbnails.load(id, at: loc, completion: done) } })
     }
 

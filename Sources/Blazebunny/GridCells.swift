@@ -42,11 +42,29 @@ final class ThumbCell: NSCollectionViewItem {
     var loadToken: ThumbnailLoader.Token?
     /// When the cell asked for its thumbnail (for the bench).
     var askedAt: UInt64 = 0
+    /// Since when the cell has been showing its item without a thumbnail (colours or nothing): a
+    /// thumbnail that comes after a real wait fades in, one that is there at once does not.
+    var waitingSince: UInt64 = 0
     private let imageLayer = CALayer()
+    /// The thumbnail's colours, under the image, shown while the image is on its way.
+    private let placeholderLayer = CALayer()
     private let badge = NSImageView()
     private var source: ItemSource?
     private(set) var isEmpty = true
-    var fill = true { didSet { if fill != oldValue { imageLayer.contentsGravity = fill ? .resizeAspectFill : .resizeAspect } } }
+    /// How much detail the image on show has; nil while the cell is empty.
+    private(set) var shownDetail: ThumbnailLoader.Detail?
+    /// Width over height of the picture, when known: where its colours go in a cell set to Fit.
+    var aspect: CGFloat? { didSet { if aspect != oldValue, hasPlaceholder { layoutImage(in: view.bounds) } } }
+    private var hasPlaceholder = false
+    /// Bumped whenever the image changes, so the end of an old fade does nothing.
+    private var fadeSerial = 0
+    var fill = true {
+        didSet {
+            guard fill != oldValue else { return }
+            imageLayer.contentsGravity = fill ? .resizeAspectFill : .resizeAspect
+            if hasPlaceholder { layoutImage(in: view.bounds) }
+        }
+    }
 
     private var cellView: CellView { view as! CellView }
 
@@ -61,6 +79,12 @@ final class ThumbCell: NSCollectionViewItem {
         imageLayer.cornerRadius = DS.Radius.cell
         // A new image replaces the old one at once: no implicit cross-fade while scrolling.
         imageLayer.actions = ["contents": NSNull(), "bounds": NSNull(), "position": NSNull(), "cornerRadius": NSNull()]
+        placeholderLayer.contentsGravity = .resize
+        placeholderLayer.masksToBounds = true
+        placeholderLayer.actions = ["contents": NSNull(), "bounds": NSNull(), "position": NSNull(), "cornerRadius": NSNull(),
+                                    "contentsRect": NSNull(), "hidden": NSNull()]
+        placeholderLayer.isHidden = true
+        v.layer?.addSublayer(placeholderLayer)
         v.layer?.addSublayer(imageLayer)
         v.onLayout = { [weak self] bounds in self?.layoutImage(in: bounds) }
         badge.translatesAutoresizingMaskIntoConstraints = false
@@ -88,9 +112,49 @@ final class ThumbCell: NSCollectionViewItem {
         setSource(source)
     }
 
-    func show(_ image: CGImage?) {
+    /// Shows the thumbnail (nil empties the cell). With `fade` it comes in over the placeholder in a
+    /// short cross-fade; the caller decides (never while scrolling fast, never with Reduce Motion).
+    func show(_ image: CGImage?, detail: ThumbnailLoader.Detail? = nil, fade: Bool = false) {
+        fadeSerial += 1
+        imageLayer.removeAnimation(forKey: "arrive")
         imageLayer.contents = image
         isEmpty = image == nil
+        shownDetail = image == nil ? nil : (detail ?? .full)
+        guard image != nil else { return }
+        guard fade else { showPlaceholder(nil); return }
+        let serial = fadeSerial
+        let arrive = CABasicAnimation(keyPath: "opacity")
+        arrive.fromValue = 0
+        arrive.toValue = 1
+        arrive.duration = DS.Motion.thumbnailFade
+        arrive.timingFunction = CAMediaTimingFunction(name: .easeOut)
+        CATransaction.begin()
+        // The colours stay underneath until the image is fully in, then go (they would show
+        // around an image that steps back inside the selection ring).
+        CATransaction.setCompletionBlock { [weak self] in
+            MainActor.assumeIsolated {
+                guard let self, self.fadeSerial == serial else { return }
+                self.showPlaceholder(nil)
+            }
+        }
+        imageLayer.add(arrive, forKey: "arrive")
+        CATransaction.commit()
+    }
+
+    /// Draws the thumbnail's colours (nil removes them). Sixteen samples stretched by the layer
+    /// with linear filtering: no blur filter, nothing over the image itself.
+    func showPlaceholder(_ placeholder: ThumbnailPlaceholder?) {
+        let image = placeholder?.makeImage()
+        guard image != nil || hasPlaceholder else { return }
+        hasPlaceholder = image != nil
+        placeholderLayer.contents = image
+        placeholderLayer.isHidden = image == nil
+        if image != nil { layoutImage(in: view.bounds) }
+    }
+
+    /// Where the colours are drawn and which part of them (nil while there are none); read by tests.
+    var placeholderArea: (frame: CGRect, part: CGRect)? {
+        hasPlaceholder ? (placeholderLayer.frame, placeholderLayer.contentsRect) : nil
     }
 
     /// Fill or fit, with a short fade when the cell is on screen.
@@ -123,8 +187,30 @@ final class ThumbCell: NSCollectionViewItem {
     /// The image fills the cell; when selected it insets inside an accent ring.
     func layoutImage(in bounds: NSRect) {
         let inset = isSelected ? DS.Size.selectionInset : 0
-        imageLayer.frame = bounds.insetBy(dx: inset, dy: inset)
+        let frame = bounds.insetBy(dx: inset, dy: inset)
+        imageLayer.frame = frame
         imageLayer.cornerRadius = DS.Radius.cell - inset
+        guard hasPlaceholder else { return }
+        // The colours go where the picture will: the whole cell when it fills it (showing the
+        // middle part of the samples, as the picture will be cropped), its own shape when it fits.
+        var area = frame
+        var part = CGRect(x: 0, y: 0, width: 1, height: 1)
+        if let aspect, aspect > 0, frame.width > 0, frame.height > 0 {
+            let cell = frame.width / frame.height
+            if fill {
+                if aspect > cell { part = CGRect(x: (1 - cell / aspect) / 2, y: 0, width: cell / aspect, height: 1) }
+                else { part = CGRect(x: 0, y: (1 - aspect / cell) / 2, width: 1, height: aspect / cell) }
+            } else if aspect > cell {
+                let height = frame.width / aspect
+                area = CGRect(x: frame.minX, y: frame.midY - height / 2, width: frame.width, height: height)
+            } else {
+                let width = frame.height * aspect
+                area = CGRect(x: frame.midX - width / 2, y: frame.minY, width: width, height: frame.height)
+            }
+        }
+        placeholderLayer.frame = area
+        placeholderLayer.contentsRect = part
+        placeholderLayer.cornerRadius = fill ? DS.Radius.cell - inset : 0
     }
 
     override var isSelected: Bool {
@@ -140,6 +226,8 @@ final class ThumbCell: NSCollectionViewItem {
         super.prepareForReuse()
         view.layer?.removeAllAnimations()
         show(nil)
+        showPlaceholder(nil)
+        aspect = nil
         itemID = -1
     }
 }

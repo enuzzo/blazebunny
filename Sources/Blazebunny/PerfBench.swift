@@ -16,18 +16,21 @@ enum GridStats {
     /// Time from a cell asking for its thumbnail to showing it, in ms.
     static var thumbnailWaits: [Double] = []
     static var cellsShownFromCache = 0
+    /// Cells that drew their colours while waiting, and thumbnails that faded in over them.
+    static var placeholdersShown = 0
+    static var fades = 0
     static weak var collectionView: NSCollectionView?
 
     static func reset() {
         layoutPasses = 0; layoutMs = 0; reloads = 0; applyMs = 0
-        thumbnailWaits = []; cellsShownFromCache = 0
+        thumbnailWaits = []; cellsShownFromCache = 0; placeholdersShown = 0; fades = 0
     }
 
     static var text: String {
         let w = thumbnailWaits.sorted()
         func q(_ p: Double) -> Double { w.isEmpty ? 0 : w[min(w.count - 1, Int(Double(w.count) * p))] }
-        return String(format: "layout passes %d (%.1f ms), reloads %d, apply %.1f ms, thumbs cached %d, loaded %d (p50 %.1f p95 %.1f max %.1f ms)",
-                      layoutPasses, layoutMs, reloads, applyMs, cellsShownFromCache, w.count, q(0.5), q(0.95), w.last ?? 0)
+        return String(format: "layout passes %d (%.1f ms), reloads %d, apply %.1f ms, thumbs cached %d, loaded %d (p50 %.1f p95 %.1f max %.1f ms), placeholders %d, fades %d",
+                      layoutPasses, layoutMs, reloads, applyMs, cellsShownFromCache, w.count, q(0.5), q(0.95), w.last ?? 0, placeholdersShown, fades)
     }
 }
 
@@ -85,6 +88,8 @@ final class PerfBench {
         }
         await pause(2)
         Perf.log("bench.items \(model.items.count)")
+        // Thumbnails that faded in while the scan was making them (none on a library already scanned).
+        Perf.log("bench.fades.before \(GridStats.fades)")
         Perf.snapshot("01-loaded")
         Perf.log("bench.screens \(NSScreen.screens.count) windows \(NSApp.windows.map { "\($0.isVisible ? "visible" : "hidden"):\(Int($0.frame.width))x\(Int($0.frame.height))" })")
         if let w = NSApp.windows.first(where: { $0.contentView != nil && $0.isVisible }) {
@@ -126,6 +131,17 @@ final class PerfBench {
 
         await scroll(name: "scroll.slow", pointsPerSecond: 3000, seconds: 3)
         Perf.snapshot("05-scrolled")
+        // A step small enough not to count as fast scrolling: the new rows fade in over their colours.
+        await phase("scroll.step", settle: 0.6) {
+            guard let cv = GridStats.collectionView, let scrollView = cv.enclosingScrollView else { return }
+            let clip = scrollView.contentView
+            for _ in 0..<40 {
+                clip.setBoundsOrigin(NSPoint(x: 0, y: min(max(0, cv.frame.height - clip.bounds.height), clip.bounds.origin.y + 16)))
+                scrollView.reflectScrolledClipView(clip)
+                await pause(0.016)
+            }
+            for k in 0..<4 { await pause(0.05); Perf.snapshot("05-step-fade-\(k)") }
+        }
         // Deep in the list, a side panel must leave the same pictures on screen.
         await phase("inspector.deep.close", settle: 1.0) { NotificationCenter.default.post(name: .benchToggleInspector, object: nil) }
         Perf.snapshot("05-scrolled-inspector-closed")
@@ -133,6 +149,15 @@ final class PerfBench {
         Perf.snapshot("05-scrolled-inspector-open")
         await scroll(name: "scroll.fast", pointsPerSecond: 30000, seconds: 3)
         await scroll(name: "scroll.back", pointsPerSecond: -60000, seconds: 2)
+
+        // The smallest cells: many more on screen, each showing a quarter of its thumbnail's pixels.
+        let size = model.cellSize
+        await phase("size.small", settle: 1.0) { model.cellSize = DS.Size.thumbnailMin }
+        Perf.snapshot("07-small")
+        await scroll(name: "scroll.small.fast", pointsPerSecond: -30000, seconds: 2)
+        await scroll(name: "scroll.small.back", pointsPerSecond: 30000, seconds: 2)
+        Perf.log("bench.rss.small.mb", Perf.residentMB())
+        await phase("size.restore", settle: 1.0) { model.cellSize = size }
 
         await phase("select.keyrepeat") { await select(count: 60, every: 0.033) }
         await phase("select.slow", settle: 1.0) { await select(count: 12, every: 0.45, from: 60, snapshot: "06-selected") }
@@ -165,7 +190,10 @@ final class PerfBench {
             let clip = scrollView.contentView
             let start = Perf.now()
             var last = start
+            var pictured = false
             while Perf.ms(since: start) < seconds * 1000 {
+                // Half way: cells that have just come in (their colours, when thumbnails are slowed down).
+                if !pictured, Perf.ms(since: start) > seconds * 500 { pictured = true; Perf.snapshot("05-\(name)-midway") }
                 let dt = Perf.ms(since: last) / 1000
                 last = Perf.now()
                 let maxY = max(0, cv.frame.height - clip.bounds.height)

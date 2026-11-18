@@ -459,6 +459,191 @@ which is the price of the bound on memory.
       kept the old scroll offset); the inspector keeps its scroll position while stepping through images; the
       main window's default size is 1440 x 900 (the size was attached to the Settings scene and did nothing).
 
+## Thumbnails: format, size, placeholder, decode path (owner, 2026-11-18)
+
+The owner's words: thumbnails "must be super fast", like Midjourney's web grid (small previews, a colour
+placeholder that fades into the image). Decided before: no 1 024 px thumbnails. Everything below was
+measured on generated data only: 21 source images made in code (7 photo-like, 7 flat illustrations, 7
+noisy generative pieces; 1 to 11 megapixels; PNG), and a folder of 12 000 copies of them. Same Mac as
+the speed pass (M4 Max, 12 + 4 cores, internal SSD, 2x display). The shootout tool is a throwaway and is
+not in the repo.
+
+### Format shootout (512 px thumbnails)
+
+Quality is SSIM on luma against the uncompressed 512 px thumbnail; decode is ImageIO as the grid calls
+it; "8 at once" is the time per thumbnail with 8 threads decoding.
+
+| Format, setting | Average size | SSIM | Encode | Decode, 1 thread | Decode, 8 at once | First decode in a process |
+|---|---|---|---|---|---|---|
+| JPEG 0.75 (kept) | 61.0 KB | 0.9909 | 0.7 ms | 0.79 ms | 0.11 ms | 6 ms |
+| JPEG 0.60 | 43.5 KB | 0.9829 | 0.6 ms | as 0.75 | as 0.75 | 6 ms |
+| HEIC 0.70 (about the same SSIM as JPEG 0.75) | 37.0 KB | 0.9873 | 17.9 ms | 2.45 ms | 0.40 ms | 93 ms |
+| AVIF 0.70 (about the same SSIM) | 35.3 KB | 0.9863 | 29.9 ms | 8 to 9 ms | about 2 ms | 99 ms |
+| WebP, JPEG XL | not possible: ImageIO reads them but cannot write them (macOS 15 to 27), and a third-party encoder is against the rules | | | | | |
+
+- **At equal size** (the size of JPEG 0.75) SSIM is 0.9909 for JPEG, 0.9945 for HEIC, 0.9943 for AVIF.
+  **At equal SSIM** HEIC needs 61% of the bytes and AVIF 58% (photo-like 63 / 64%, flat 33 / 33%, noisy
+  generative 86 / 77%). On colour, HEIC and AVIF are worse: PSNR over red, green and blue at equal size is
+  33.7 dB for JPEG and 32.3 dB for both (they halve the colour resolution; saturated edges show it).
+- **Decode is what a fast grid pays for**, and JPEG wins it by 3 to 4 times over HEIC and 10 times or more over
+  AVIF. A JPEG can also be decoded straight to half its size (0.56 ms on one thread, 0.08 ms with 8 at
+  once); HEIC and AVIF cannot (0.56 and 2.1 ms with 8 at once, no faster than whole).
+- **Reading is not the cost.** Warm, a 61 KB thumbnail is read from its pack in 0.003 ms. Cold (file
+  cache bypassed): 0.18 ms for 61 KB, 0.145 ms for 37 KB, one at a time; 0.026 and 0.022 ms with 8 at
+  once. A smaller file saves 0.03 ms of a cold read and costs 1.7 ms (HEIC) or 7 ms (AVIF) of decode.
+- **Encode** runs during scans: 0.7 ms for JPEG is nothing next to decoding the original; 18 to 30 ms
+  would be a visible part of a scan of small images.
+- **Choice: JPEG, 512 px, quality 0.75, unchanged.** No pack-file change is needed. The only thing HEIC
+  would buy is disk space (about 3.8 GB instead of 6.2 GB per 100 000 thumbnails of this kind); JPEG at
+  0.60 would save 29% with a measurable loss (SSIM 0.983 against 0.991 shown 1:1). Both are the owner's
+  call; neither makes anything faster.
+
+### Size shootout
+
+What the screen shows (the stored thumbnail stretched or shrunk by the layer, linear filtering) against
+the original scaled straight to that size; SSIM, JPEG 0.75, all 21 images, the long side in pixels:
+
+| Stored | Size | 170 px | 256 px | 340 px | 512 px | 680 px | 928 px |
+|---|---|---|---|---|---|---|---|
+| 640 px | 90 KB | 0.946 | 0.978 | 0.986 | 0.990 | 0.976 | 0.944 |
+| **512 px** | 61 KB | 0.960 | 0.990 | 0.991 | 0.991 | 0.960 | 0.922 |
+| 384 px | 37 KB | 0.973 | 0.992 | 0.986 | 0.962 | 0.930 | 0.888 |
+| 320 px | 28 KB | 0.981 | 0.990 | 0.977 | 0.942 | 0.907 | 0.861 |
+| 256 px | 19 KB | 0.987 | 0.991 | 0.958 | 0.913 | 0.875 | 0.827 |
+
+Noisy generative images are the worst case: stored at 512 they score 0.991 at 512 px, 0.930 at 680 and
+0.848 at 928; stored at 384, 0.936 at 512; at 320, 0.903.
+
+Where those sizes are, on a 2x display (`JustifiedFlowLayout`: cells grow from the slider's value to
+fill the row, so a cell is 1.0 to about 1.3 times the slider's value):
+
+- **Smallest cells** (slider 80, cells about 85 pt): a picture is 170 px on its long side in Fit, 255 px
+  in Fill for 3:2 and 302 px for 16:9.
+- **Default** (slider 160, cells 169 to 191 pt): 340 to 382 px in Fit; 507 to 573 px in Fill for 3:2,
+  600 to 680 px for 16:9.
+- **Largest** (slider 360, cells 390 to 470 pt): 780 to 940 px in Fit, 1 200 px and more in Fill.
+
+So: a 512 px thumbnail is first enlarged when the picture is wider than 512 px on screen, which is a Fit
+cell above 256 pt, or a Fill cell above 171 pt (3:2) or 144 pt (16:9). **512 px is the smallest size
+that is not enlarged at the default cell size**; 384 and 320 are (0.962 and 0.942 where 512 gives 0.991;
+0.936 and 0.903 on noisy images). **No single size fits all**: at the largest cells 512 px is already
+enlarged 1.6 to 1.8 times today (0.92; 0.85 on noisy images), and at the smallest cells it is shrunk
+three times by the layer, which loses more than a smaller image would (0.960 against 0.987).
+
+- **Small end, done**: cells that show at most 256 px decode the JPEG at half size (`ThumbnailDecoder.
+  smallPixel`). No second tier on disk: the JPEG decoder makes the half-size image directly.
+- **Large end, proposal, not done** (owner's decision): keep 512 px on disk and, at the top slider
+  sizes, replace the few thumbnails on screen (6 to 12) with a decode of the original once scrolling
+  rests, as the inspector's preview already does; costs no disk space, needs the disk attached. The
+  alternative is 640 px thumbnails: 48% more bytes for 0.976 instead of 0.960 at 680 px.
+
+### What was slow, and what changed
+
+- [x] **Showing a thumbnail cost the main thread about 0.6 ms**, half of all its work in a fast scroll.
+      Cause (found with `sample`): Core Animation draws an image again on the main thread, when its layer
+      is first shown, unless the image is already in the window's colour space and in plain 8-bit BGRA
+      (`CA::Render::copy_image`: for an image straight from ImageIO it asked ImageIO for a surface; for an
+      sRGB bitmap on a wide-gamut display it converted the colours). Thumbnails are now decoded into
+      that layout and the window's colour space on the decoding thread (`ThumbnailDecoder.decodeForLayer`,
+      `ThumbnailLoader.displayColorSpace`, updated when the window changes display).
+- [x] **Decoding did not use the cores.** `CGImageSourceCreateImageAtIndex` with "cache immediately"
+      takes 0.55 ms per thumbnail on 1 thread and still 0.55 ms per thumbnail on 16 (it decodes one at
+      a time). ImageIO's thumbnail call takes 0.79 ms on 1 thread, 0.21 on 4, 0.11 on 8, 0.085 on 16. The
+      grid uses that one (`ThumbnailDecoder.decode`). One thumbnail now costs more processor time in
+      total (about 1.4 ms on one core with the colour conversion, against 0.55), spread over every core
+      and none of it on the main thread.
+- [x] **Half-size decode for small cells** (above). At the smallest size, a 30 000 pt/s fling over 5 300
+      cells: 95% of thumbnails shown within 7.8 to 10.9 ms against 12.6 to 16.1 ms decoding them whole,
+      2 to 7 stalls over 8.3 ms against 6 to 16; a quarter of the memory per cell. The main thread's time
+      is the same (1.4 s: at that size it is AppKit making and placing 2 600 cells a second).
+- [x] **Placeholder.** Each thumbnail's colours as 16 samples (4 x 4, 16 bits each: 32 bytes,
+      `ThumbnailPlaceholder`), worked out from the thumbnail when it is made and stored in a table of
+      their own (`item_placeholders`, schema 5): the browse index and the grid's query are untouched.
+      The app reads the table once when a library opens, off the main thread. A cell with no decoded
+      thumbnail draws the colours (a 4 x 4 image stretched by the layer with linear filtering: no blur
+      filter, nothing over the image) where the picture will be, and the thumbnail replaces them. It
+      fades in over them (0.18 s) only when the cell has waited 50 ms or more (a first scan, a cold
+      start), never when scrolling faster than 1 500 pt/s, never with Reduce Motion.
+- [x] **Libraries from before** (schema 4): the migration only creates the empty table. Their thumbnails
+      keep showing as they are; their colours are worked out from the packs in the background after
+      the first grid is up (`PlaceholderBackfill`: 12 000 in 0.6 s; at that rate 5 s per 100 000), with or
+      without the library's disk. Packs may hold more than one format (the decoder reads the format
+      from the bytes), so a later change of format needs no change of layout; a thumbnail whose bytes
+      are not where the grid's item says is looked up again in the index.
+- [x] **Scan: files at once by the number of cores** on a solid-state disk (`VolumeKind`: cores minus 2,
+      at least 6, at most 12; it was 6). Making a thumbnail is decoding the original, and the disk keeps
+      up: 12 000 PNGs in 98 s at 6, 57 s at 12, 48 s at 16.
+- [x] **First scan: the thumbnails on screen were not made first.** Right after a reload the grid did not
+      know yet which cells were visible, so the scan worked through files nobody was looking at until the
+      next reload: on the 12 000 folder the first thumbnail appeared 6.9 to 8.0 s after launch. The grid now
+      asks again once the rows are laid out: 1.2 s, for the whole first screen.
+- [x] **Scan status stuck on "scanning".** Progress reports hop to the main thread one by one and two could
+      arrive out of order; on a scan with nothing to do, "done" was sometimes overwritten by the report
+      before it (seen once in eight runs of the bench, which then waited for ever). Late reports are dropped.
+- [ ] **Not needed, measured**: read-ahead in the scrolling direction (a cell waits 2 ms for its
+      thumbnail, 95% under 4.4 ms: less than a frame, and the colours are there meanwhile); a larger or
+      differently sized decoded cache (flinging back over 1 900 cells re-decodes 1 300 of them with no
+      stall over 8.3 ms; the bound stays 192 to 512 MB by bytes, which is four times as many cells
+      when they are small).
+
+### Before and after
+
+App figures: `--bench` on the 12 000 folder, window 1440 x 900 on a 2x display, warm library, release
+build, a copy of the app with its own preferences domain. Ranges are 5 runs before and 6 to 14 after, on
+a quiet machine; the window was sometimes hidden behind the lock screen (the numbers did not differ).
+While other programs kept the Mac very busy (load average 100 to 360) the fast scroll took 740 to 834 ms of
+main-thread CPU after and 1 844 to 1 996 ms before, with 0 to 6 stalls over 8.3 ms after and 54 to 59 before. "Before" is commit 23cb747.
+
+| What | Before | After |
+|---|---|---|
+| Pack size per 100 000 thumbnails (generated set; a real library averages 57 KB) | 6.2 GB | 6.2 GB (format unchanged) |
+| Index per 100 000 items | 279 MB | 284 to 288 MB (+5 to 9 MB of placeholders) |
+| Grid query, 100 000 items (`bbscopebench --placeholders`) | 26.0 ms | 25.4 ms |
+| Reading every placeholder, 100 000 (once per library, off the main thread) | n/a | 29 ms, about 10 MB in memory |
+| Saving 100 000 thumbnails to the index | 0.50 s | 0.98 s with their colours (5 µs each) |
+| Scan, 12 000 PNGs of 1 to 11 megapixels, internal SSD (`bbbench`) | 98.4 s (122 thumbnails/s) | 52.4 s (229/s); 99.2 s with placeholders at the old 6 files at once |
+| Scan on an external USB disk (kind unknown: 2 files at once), 1 200 of the same PNGs | not measured | 84.6 s (14 thumbnails/s, 73 MB/s: the disk is the limit; 68 s at 6 at once) |
+| First scan in the app: first thumbnail on screen | 8.0 s | 1.2 s |
+| Fast scroll, 30 000 pt/s for 3 s (1 740 to 1 800 cells): main-thread CPU | 1 681 to 1 868 ms | 632 to 714 ms |
+| Fast scroll: stalls over 8.3 ms / over 16.7 ms | 42 to 56 / 0 to 32 | 0 to 1 / 0 |
+| Fast scroll: wait for a thumbnail, median / 95% / worst | 5.6 to 5.9 / 12.6 to 21.8 / 22 to 33 ms | 1.9 to 2.5 / 3.3 to 4.4 / 5 to 10 ms |
+| Fling back, 60 000 pt/s for 2 s: main-thread CPU | 934 to 1 006 ms | 430 to 484 ms |
+| Fling back: stalls over 8.3 ms; wait, median / 95% | 36 to 67; 8.4 to 10.2 / 22 to 29 ms | 0 to 1; 2.1 to 3.9 / 3.9 to 8.2 ms |
+| Slow scroll, 3 000 pt/s: main-thread CPU | 500 to 601 ms | 424 to 432 ms |
+| Open a folder: wait for its thumbnails, median | 11.8 to 13.3 ms | 3.5 to 4.2 ms |
+| Cell draw cost of the placeholder in a fast scroll (`sample`, main thread) | n/a | 4 of about 300 busy samples (about 1%) |
+| Warm launch to a grid with its thumbnails | 428 to 563 ms | 377 to 435 ms (two runs of fifteen: 640 and 695) |
+| Memory after the scroll phases: resident / physical footprint | 807 to 887 MB / 404 MB | 214 to 279 MB / 108 MB |
+| Idle CPU | 0.0% | 0.0% (0.01 s of CPU in 20 s) |
+| Side panels, size slider, Fill / Fit, filter, search, arrow keys | | unchanged (within a few ms) |
+
+About the memory line: the bound on decoded thumbnails is the same (512 MB on this Mac). The old images
+lived in surfaces and purgeable memory that the system counts differently (518 MB more was "reclaimable"),
+and the new bitmaps are only counted once the app itself touches them, so the figures say "not worse",
+not "four times less".
+
+### Not verified, needs the owner's eyes
+
+- Sharpness at the largest cell sizes (unchanged by this work, and soft by the numbers above) and at the
+  smallest (should be a little crisper: half-size decode instead of shrinking three times).
+- The placeholder colours and the fade: seen only in pictures of the window's layers taken by the
+  bench (`BB_THUMB_DELAY_MS=400 BB_SNAPSHOT_DIR=...`), where the colours are in the right place and the
+  image fades over them. Those pictures do not show the layer's smoothing, so on screen the colours
+  should be a soft blur where the pictures show sixteen blocks. Whether 0.18 s and the 50 ms threshold feel
+  right, and whether a fade on the first screen at launch is wanted, only a screen can tell.
+- The scan with 12 files at once while using the app: the scan runs at utility priority and nothing was
+  slower in the bench, but nobody scrolled a real library during a real scan.
+- Colours on a display with another profile, and moving the window between two displays.
+
+### Decisions for the owner
+
+- Disk space or not: HEIC would make packs 39% smaller (3.8 GB per 100 000 instead of 6.2) at 3 to 4
+  times the decode time and 25 times the encode time; JPEG 0.60 would make them 29% smaller with a small
+  measurable loss. Recommendation: neither.
+- The largest cells: originals for the cells on screen at the top slider sizes, 640 px thumbnails, or
+  leave them as they are.
+- 12 files at once on a solid-state disk (it was 6): keep, or cap lower on laptops.
+
 ## Themes (owner, 2026-11-17)
 
 - [ ] Preferences > Appearance: **Accent theme** with System (default), Neon (Griddo's lime and magenta),

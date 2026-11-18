@@ -33,6 +33,9 @@ public final class FolderScanner: @unchecked Sendable {
     /// Set it before `run`; it is called on the scanner's task.
     public var onThumbnails: (@Sendable ([(id: Int64, location: ThumbnailLocation)]) -> Void)?
 
+    /// Called with the colours of the same thumbnails, just before `onThumbnails`.
+    public var onPlaceholders: (@Sendable ([(id: Int64, placeholder: ThumbnailPlaceholder)]) -> Void)?
+
     /// Whether the folder is still there as a directory. Checked before pruning and
     /// before saving each batch, so a disk that vanishes mid-scan cannot wipe the index
     /// or mark unread files as failed. Replaceable in tests.
@@ -167,20 +170,24 @@ public final class FolderScanner: @unchecked Sendable {
         var pending = try index.pendingThumbnails(ids: wanted)
         if pending.isEmpty { pending = try index.pendingThumbnails(limit: ioConcurrency * 4) }
         if pending.isEmpty { return 0 }
-        let results = await mapConcurrently(pending) { item -> (id: Int64, location: ThumbnailLocation?) in
+        let results = await mapConcurrently(pending) { item -> (id: Int64, location: ThumbnailLocation?, placeholder: ThumbnailPlaceholder?) in
             let url = self.root.appendingPathComponent(item.relPath)
             do {
-                let data = try await ThumbnailMaker.make(from: url, kind: item.kind)
+                let made = try await ThumbnailMaker.makeWithPlaceholder(from: url, kind: item.kind)
                 self.addBytes(url)
-                return (item.id, try thumbnails.append(data))
+                return (item.id, try thumbnails.append(made.data), made.placeholder)
             } catch {
-                return (item.id, nil)
+                return (item.id, nil, nil)
             }
         }
         guard isRootReachable() else { return nil }
         try index.saveThumbnails(results)
         let made = results.compactMap { r in r.location.map { (id: r.id, location: $0) } }
-        if !made.isEmpty { onThumbnails?(made) }
+        if !made.isEmpty {
+            let colours = results.compactMap { r in r.location == nil ? nil : r.placeholder.map { (id: r.id, placeholder: $0) } }
+            if !colours.isEmpty { onPlaceholders?(colours) }
+            onThumbnails?(made)
+        }
         return results.count
     }
 

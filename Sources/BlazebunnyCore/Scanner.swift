@@ -220,9 +220,14 @@ public final class FolderScanner: @unchecked Sendable {
             return path.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
         }
         var entries = 0
+        var lastReport = Date()
         for case let url as URL in e {
             entries += 1
-            if entries % 1000 == 0 { onProgress(entries) }
+            // By time as well as by count: a busy or slow disk may deliver only a few entries a second.
+            if entries % 200 == 0 || Date().timeIntervalSince(lastReport) > 0.25 {
+                lastReport = Date()
+                onProgress(entries)
+            }
             if (try? url.resourceValues(forKeys: [.isDirectoryKey]))?.isDirectory == true {
                 let p = relative(url)
                 if !p.isEmpty { dirs.append(p) }

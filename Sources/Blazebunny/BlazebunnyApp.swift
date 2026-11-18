@@ -22,6 +22,9 @@ struct BlazebunnyApp: App {
         .defaultSize(width: 1440, height: 900)
         .windowToolbarStyle(.unified)
         .commands {
+            CommandGroup(replacing: .appInfo) {
+                Button("About Blazebunny") { BuildInfo.showAbout() }
+            }
             CommandGroup(replacing: .newItem) {
                 Button("Open Folder…") { model.openFolderPanel() }
                     .keyboardShortcut("o")
@@ -313,6 +316,23 @@ struct PageHeader: View {
             }
         }
     }
+}
+
+/// Which build is running: version, commit count and commit (`+` = built with uncommitted changes).
+/// Stamped into the app's Info.plist by `scripts/build-app.sh`; a bare `swift run` shows "dev".
+enum BuildInfo {
+    static let version = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "0"
+    static let build = Bundle.main.infoDictionary?["CFBundleVersion"] as? String ?? "dev"
+    static let commit = Bundle.main.infoDictionary?["BlazebunnyCommit"] as? String ?? "dev"
+    static let builtAt = Bundle.main.infoDictionary?["BlazebunnyBuiltAt"] as? String ?? ""
+    /// The standard About panel, with the build spelled out under the version.
+    @MainActor static func showAbout() {
+        let credits = NSAttributedString(string: "Build \(build) · \(builtAt.isEmpty ? "dev" : builtAt)\nCommit \(commit)",
+                                         attributes: [.font: NSFont.systemFont(ofSize: 11), .foregroundColor: NSColor.secondaryLabelColor])
+        NSApp.orderFrontStandardAboutPanel(options: [.credits: credits])
+    }
+    static var short: String { "v\(version) · \(builtAt.isEmpty ? "b" + build : builtAt) · \(commit)" }
+    static var long: String { "Blazebunny \(version), build \(build), commit \(commit)" + (builtAt.isEmpty ? "" : ", built \(builtAt)") }
 }
 
 struct StatusBar: View {
